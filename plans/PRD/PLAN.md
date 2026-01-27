@@ -22,10 +22,11 @@ finale is **not a logger**. It is an instrumentation layer that:
 ### Package Structure
 
 ```
-@finale/core          # Core library
-@finale/sinks-pino    # Pino adapter
-@finale/sinks-winston # Winston adapter (v2+)
-@finale/test          # Testing utilities
+@finalejs/core           # Core library (no validation runtime)
+@finalejs/schema-zod     # Zod schema adapter
+@finalejs/sink-pino      # Pino adapter
+@finalejs/sink-console   # Dev/debug pretty-print
+@finalejs/test           # Testing utilities
 ```
 
 ---
@@ -74,6 +75,7 @@ Wide events / canonical log lines are a known pattern (Stripe, Honeycomb, etc.) 
 2. **Solving storage economics**: Wide events shine with columnar backends (ClickHouse, BigQuery); the library can't pay your bill
 3. **Forcing organizational discipline**: Schema stewardship and PII hygiene require human commitment
 4. **Replacing loggers**: finale outputs to your logger, not stdout directly
+5. **Being a durable queue**: finale is not a message broker; durability comes from your sink/agent
 
 ### Success Criteria
 
@@ -84,14 +86,122 @@ Wide events / canonical log lines are a known pattern (Stripe, Honeycomb, etc.) 
 
 ---
 
-## 4. Core Concepts
+## 4. Operational Contract
+
+This section defines what finale guarantees and what it does not. Teams must understand this to trust it in production.
+
+### Emission Guarantees
+
+| Guarantee | Level |
+|-----------|-------|
+| **Delivery** | Best-effort. If the process crashes, queued events may be lost. |
+| **Ordering** | Not guaranteed across requests. Within a request, one event. |
+| **Exactly-once** | No. Duplicates possible if sink retries succeed after timeout. |
+
+**The posture**: finale is non-blocking and fast. Durability is the sink's job (stdout + agent, or local collector).
+
+### When Does Finale Drop Events?
+
+| Condition | Behavior |
+|-----------|----------|
+| **Sampling decision = DROP** | Intentional. Event never reaches sink. |
+| **Queue full (backpressure)** | Drops according to policy (see below). |
+| **Sink failure** | Swallows error, increments counter, does not retry by default. |
+| **Process crash** | In-flight queue is lost. |
+
+### Backpressure / Drop Policy
+
+When the internal queue is full:
+
+| Policy | Behavior |
+|--------|----------|
+| `drop-newest` | New events are dropped. Protects older (potentially more interesting) events. |
+| `drop-oldest` | Old events are dropped. Keeps the queue fresh. |
+| `drop-lowest-tier` | DROP < KEEP_MINIMAL < KEEP_NORMAL < KEEP_DEBUG. Prefer keeping important events. |
+
+**Default**: `drop-lowest-tier` with fallback to `drop-newest`.
+
+### Drain on Shutdown
+
+```typescript
+// Graceful shutdown hook
+await finale.drain({ timeoutMs: 5000 });
+```
+
+- Attempts to flush queued events before process exit.
+- In serverless (Lambda, Vercel), you may not get time to drain. Use stdout sink + external agent for durability.
+- After timeout, remaining events are lost.
+
+### Retry Policy
+
+**Default**: No retries for sink failures. Rationale:
+- Retries add latency and complexity.
+- If you need durability, use a local collector (vector, fluent-bit, OTel Collector) that handles retries.
+
+**Optional**: Sinks can implement their own retry logic internally.
+
+### Observing Drops and Failures
+
+```typescript
+finale.metrics.eventsEmitted      // Successfully handed to sink
+finale.metrics.eventsDropped      // Intentional (sampling) + backpressure
+finale.metrics.eventsSampledOut   // Specifically sampling DROP
+finale.metrics.sinkFailures       // Sink threw/rejected
+finale.metrics.queueDrops         // Backpressure drops
+```
+
+### Recommended Production Setup
+
+| Setup | Durability | Latency | Complexity |
+|-------|------------|---------|------------|
+| **stdout + agent** (recommended) | High (agent handles retries) | Low | Low |
+| **Local collector** (vector, OTel) | High | Low | Medium |
+| **Direct HTTP sink** | Medium (no retry by default) | Higher | Low |
+
+---
+
+## 5. Event Semantics
+
+### What "One Event Per Request" Means
+
+finale emits **one primary event per request per service hop**. This is the core contract.
+
+| Scenario | Behavior |
+|----------|----------|
+| **Normal HTTP request** | One event, flushed after response ends. |
+| **Streaming response** | One event, flushed after stream closes. Timings reflect total duration. |
+| **Fan-out (request triggers N internal calls)** | Still one event. Internal calls can add fields, but don't create child events. |
+| **Background job** | One event per job execution (not per retry). |
+| **Nested async operations** | All contribute to the same event via shared scope. |
+
+### What About Sub-Events?
+
+**V1**: No sub-events. Timers capture phase durations within the primary event.
+
+**Future consideration**: Optional `emitMilestone()` for rare cases (e.g., long-running jobs that want intermediate checkpoints). Deferred to v2+.
+
+### Timers Are Not Traces
+
+Timers record phase durations inside the single event. They are not distributed traces.
+
+```typescript
+scope.timers.start('db.query');
+// ... query ...
+scope.timers.end('db.query');
+// Results in: "timings.db.query": 45 (ms)
+```
+
+If you need distributed tracing, use OpenTelemetry traces alongside finale events. finale can include `trace.id` and `span.id` for correlation.
+
+---
+
+## 6. Core Concepts
 
 ### Event (Wide Event)
 
 A single, structured record representing "what happened" for a request in one service hop.
 
 ```typescript
-// Conceptual event shape
 {
   // Identity
   "service.name": "web-api",
@@ -119,7 +229,12 @@ A single, structured record representing "what happened" for a request in one se
 
   // Error (if applicable)
   "error.class": "PaymentDeclined",
-  "error.message": "Card declined"
+  "error.message": "Card declined",
+
+  // Metadata
+  "_finale.schema_version": "1.2",
+  "_finale.sampling_decision": "KEEP_NORMAL",
+  "_finale.sampling_reason": "slow"
 }
 ```
 
@@ -145,7 +260,7 @@ An async adapter that receives finalized events and hands them to an existing em
 
 ---
 
-## 5. Architecture
+## 7. Architecture
 
 finale uses a 6-layer architecture:
 
@@ -173,8 +288,8 @@ finale uses a 6-layer architecture:
                               ▼
 ┌─────────────────────────────────────────────────────────────┐
 │  C. Governance Layer                                        │
-│  - Field Registry (typed keys, namespaces)                  │
-│  - Schema Versioning                                        │
+│  - Field Registry (typed keys, namespaces, metadata)        │
+│  - Schema Adapter Interface                                 │
 │  - Validation (strict/soft modes)                           │
 └─────────────────────────────────────────────────────────────┘
                               │
@@ -196,13 +311,13 @@ finale uses a 6-layer architecture:
                               ▼
 ┌─────────────────────────────────────────────────────────────┐
 │  F. Sink Layer                                              │
-│  - Sink Interface (emit → void | Promise)                   │
-│  - Async Queue (bounded memory, drop policy)                │
-│  - Built-in: pino, winston, console                         │
+│  - Sink Interface                                           │
+│  - Async Queue (bounded, drop policy, drain)                │
+│  - Built-in: pino, console                                  │
 └─────────────────────────────────────────────────────────────┘
                               │
                               ▼
-                    [pino/winston/collector]
+                    [pino/stdout/collector]
 ```
 
 ### A. Runtime Layer
@@ -212,16 +327,32 @@ finale uses a 6-layer architecture:
 - Provide "current scope" getter for deep code paths
 - Handle scope propagation through async boundaries
 
-**Modules:**
+**Scope Propagation Failure Mode:**
 
-| Module | Description |
-|--------|-------------|
-| `ScopeManager` | Node: `AsyncLocalStorage`. Edge: explicit context passing |
-| `LifecycleHooks` | `startScope()`: initialize with base fields. `endScope()`: finalize, sample, flush |
+When `getScope()` is called outside an active scope (no AsyncLocalStorage context):
 
-**Design Constraints:**
-- Scopes must be nestable or resilient to nested async calls
-- Scope creation must be cheap (no heavy allocations)
+| Mode | Behavior |
+|------|----------|
+| **Default** | Returns a **no-op scope**. Calls to `.add()` do nothing. No crash. |
+| **Development** | Returns no-op scope + emits a warning (once per call site). |
+| **Strict** | Throws `ScopeNotFoundError`. Opt-in for catching bugs early. |
+
+```typescript
+const scope = getScope(); // Never crashes in default mode
+scope.event.add({ ... }); // Silently ignored if no active scope
+```
+
+**Nesting Behavior:**
+
+Scopes are **stackable**. Creating a scope inside another scope pushes onto a stack.
+
+| Operation | Behavior |
+|-----------|----------|
+| `getScope()` | Returns the **top of stack** (innermost active scope). |
+| Nested `withScope()` | Creates a new scope; inner code sees the new scope. |
+| Scope exit | Pops from stack; outer scope becomes active again. |
+
+This prevents weirdness when libraries internally create scopes.
 
 ### B. Event Accumulation Layer
 
@@ -230,18 +361,22 @@ finale uses a 6-layer architecture:
 - Preserve consistent merge strategy
 - Prevent runaway payload size
 
-**Modules:**
+**Merge Semantics:**
 
-| Module | Description |
-|--------|-------------|
-| `EventStore` | Merge semantics: last-write-wins for scalars, capped lists for arrays, counters for metrics |
-| `Timers` | Start/stop named phases (not full tracing, just timings for the final event) |
-| `ErrorCapture` | Normalize thrown values into structured fields; stack traces under policy control |
+| Type | Behavior |
+|------|----------|
+| Scalar | Last-write-wins |
+| Array | Append, capped at max length |
+| Counter | Increment (for fields declared as counters) |
 
 **Limits:**
-- Max keys per event
-- Max total size estimate
-- Max list length per array field
+
+| Limit | Default | Configurable |
+|-------|---------|--------------|
+| Max keys per event | 100 | Yes |
+| Max total size estimate | 64KB | Yes |
+| Max array length | 20 | Yes |
+| Max string length | 1000 | Yes |
 
 ### C. Governance Layer
 
@@ -249,19 +384,88 @@ finale uses a 6-layer architecture:
 - Make field naming and shapes consistent across codebase
 - Make it hard to introduce junk fields, typos, or inconsistent casing
 
-**Modules:**
+**Field Registry with Metadata:**
 
-| Module | Description |
-|--------|-------------|
-| `FieldRegistry` | Central declaration of allowed fields and their types |
-| `SchemaVersioning` | Version stamps on events; deprecation support with dev/test warnings |
-| `Validation` | Strict mode (throw/warn), Soft mode (drop invalid, increment counters) |
+Each field declaration includes:
 
-**Field Groups:**
-- **Core**: Always present (service, env, route, status, duration, requestId)
-- **Domain**: Business context (userId, orgId, plan, feature flags)
-- **Diagnostics**: Timings, breadcrumbs, debug facts
-- **Error**: Structured error fields
+```typescript
+interface FieldDefinition {
+  // Type validation (via schema adapter)
+  type: SchemaType;
+
+  // Metadata for policies
+  group: 'core' | 'domain' | 'diagnostics' | 'error';
+  sensitivity: 'safe' | 'pii' | 'secret';
+  cardinality: 'low' | 'medium' | 'high' | 'unbounded';
+  priority: 'must-keep' | 'important' | 'optional' | 'drop-first';
+
+  // Transformation rule (used by safety layer)
+  transform?: 'allow' | 'hash' | 'mask' | 'bucket' | 'drop';
+}
+```
+
+**Example Registry:**
+
+```typescript
+const fields = defineFields({
+  'service.name': {
+    type: schema.string(),
+    group: 'core',
+    sensitivity: 'safe',
+    cardinality: 'low',
+    priority: 'must-keep',
+  },
+  'user.id': {
+    type: schema.string().optional(),
+    group: 'domain',
+    sensitivity: 'pii',
+    cardinality: 'high',
+    priority: 'important',
+    transform: 'allow', // Org decision: user IDs are okay to log
+  },
+  'user.email': {
+    type: schema.string().optional(),
+    group: 'domain',
+    sensitivity: 'pii',
+    cardinality: 'high',
+    priority: 'optional',
+    transform: 'drop', // Never log emails
+  },
+  'http.request_body': {
+    type: schema.string().optional(),
+    group: 'diagnostics',
+    sensitivity: 'secret',
+    cardinality: 'unbounded',
+    priority: 'drop-first',
+    transform: 'drop', // Dangerous, never log
+  },
+});
+```
+
+**Schema Adapter Interface:**
+
+Core does not depend on Zod. Instead, it defines a minimal adapter interface:
+
+```typescript
+interface SchemaAdapter<T> {
+  // Validate a value, return parsed or throw
+  parse(value: unknown): T;
+
+  // Safe validate, return result object
+  safeParse(value: unknown): { success: true; data: T } | { success: false; error: Error };
+
+  // Check if optional
+  isOptional(): boolean;
+}
+```
+
+**Provided Adapters:**
+
+| Package | Description |
+|---------|-------------|
+| `@finalejs/schema-zod` | Wraps Zod schemas |
+| `@finalejs/schema-typebox` | Wraps TypeBox (future) |
+| `@finalejs/schema-none` | Types-only, no runtime validation |
 
 ### D. Safety Layer
 
@@ -269,15 +473,49 @@ finale uses a 6-layer architecture:
 - Prevent leaking sensitive data
 - Prevent cost explosions from high-cardinality chaos
 
-**Modules:**
+**Redaction Engine:**
 
-| Module | Description |
-|--------|-------------|
-| `RedactionEngine` | Rule-based per field: `allow`, `drop`, `hash`, `mask`, `bucket`. Pattern scanners as last resort |
-| `CardinalityGuard` | Per-field rules: `user.id` allowed, raw URL query strings dropped/normalized |
-| `BudgetEnforcer` | Hard cap on event size. Priority system: core fields always keep, optional drop first |
+Uses field metadata `sensitivity` and `transform` to apply rules:
 
-**Default Posture:** Safe by default, opt in to risky detail.
+| Transform | Effect |
+|-----------|--------|
+| `allow` | Pass through unchanged |
+| `hash` | SHA-256 hash, prefixed with `hash:` |
+| `mask` | Replace with `[REDACTED]` |
+| `bucket` | Normalize into buckets (e.g., numeric ranges) |
+| `drop` | Remove field entirely |
+
+**Pattern Scanner (Last Resort):**
+
+Scans string values for likely secrets:
+
+```typescript
+const defaultPatterns = [
+  /Bearer\s+[A-Za-z0-9\-._~+\/]+=*/i,  // Bearer tokens
+  /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z]{2,}/i,  // Emails
+  /password/i,  // Password mentions
+];
+```
+
+Matched values are redacted. Pattern scanning is configurable and can be disabled.
+
+**Budget Enforcer:**
+
+When event exceeds limits, fields are dropped by priority:
+
+1. `drop-first` fields dropped first
+2. Then `optional`
+3. Then `important`
+4. `must-keep` fields are never dropped
+
+Dropped fields are recorded:
+
+```typescript
+{
+  "_finale.dropped_fields": ["user.preferences", "http.headers"],
+  "_finale.drop_reason": "budget_exceeded"
+}
+```
 
 ### E. Tail-Sampling Layer
 
@@ -287,24 +525,25 @@ finale uses a 6-layer architecture:
 
 **Sampling Outputs:**
 
-| Decision | Description |
-|----------|-------------|
-| `DROP` | Do not emit |
-| `KEEP_MINIMAL` | Emit core fields only |
-| `KEEP_NORMAL` | Emit core + domain fields |
-| `KEEP_DEBUG` | Emit everything including diagnostics |
+| Decision | Description | Fields Included |
+|----------|-------------|-----------------|
+| `DROP` | Do not emit | None |
+| `KEEP_MINIMAL` | Bare essentials | `core` |
+| `KEEP_NORMAL` | Standard production | `core` + `domain` |
+| `KEEP_DEBUG` | Full detail | All groups |
 
-**Policy Inputs:**
-- Outcome (success/error)
-- Duration (p95 threshold)
-- User cohort (VIP)
-- Feature flags
-- Endpoint/operation
-- Error class
+**Policy Interface:**
 
-**Rule Composition:**
-1. Deterministic rules first (errors always keep, slow requests keep)
-2. Probabilistic sampling second (successes at 1%)
+```typescript
+interface SamplingPolicy {
+  decide(event: FinalizedEvent): SamplingDecision;
+}
+
+interface SamplingDecision {
+  decision: 'DROP' | 'KEEP_MINIMAL' | 'KEEP_NORMAL' | 'KEEP_DEBUG';
+  reason?: string; // For debugging/auditing
+}
+```
 
 ### F. Sink Layer
 
@@ -317,38 +556,51 @@ finale uses a 6-layer architecture:
 
 ```typescript
 interface Sink {
-  emit(record: FinalizedEvent, level: string): void | Promise<void>;
+  emit(record: FinalizedEvent): void | Promise<void>;
+
+  // Optional: called on graceful shutdown
+  drain?(): Promise<void>;
 }
 ```
 
-**Built-in Sinks:**
-- `pinoSink`: Adapts to pino logger
-- `winstonSink`: Adapts to winston (v2+)
-- `consoleSink`: Pretty-print for dev/testing
+**Queue Semantics:**
 
-**Failure Behavior:**
-- Swallow failures with internal counters
-- Configurable: fail-open (default) vs fail-closed (dev/test)
+| Property | Default | Notes |
+|----------|---------|-------|
+| Max queue size | 1000 events | Configurable |
+| Drop policy | `drop-lowest-tier` | See backpressure section |
+| Async | Yes | `emit()` returns immediately |
 
 ---
 
-## 6. Public API Surface
+## 8. Public API Surface
 
 ### Engine Creation
 
 ```typescript
-import { createFinale } from '@finale/core';
+import { createFinale } from '@finalejs/core';
+import { zodAdapter } from '@finalejs/schema-zod';
+import { pinoSink } from '@finalejs/sink-pino';
 
 const finale = createFinale({
   // Required
-  schema: FieldRegistry,      // Typed field definitions
+  fields: FieldRegistry,      // Field definitions with metadata
   sink: Sink,                 // Output adapter
 
   // Optional
-  pii: PIIPolicy,             // Redaction rules
+  schemaAdapter: zodAdapter,  // Runtime validation (default: none)
   sampling: SamplingPolicy,   // Tail sampling policy
-  defaults: Record<string, unknown>,  // Base fields for all events
-  validation: 'strict' | 'soft',      // Default: 'soft' in prod
+  defaults: { ... },          // Base fields for all events
+
+  // Behavior
+  validation: 'strict' | 'soft',  // Default: 'soft'
+  scopeMode: 'default' | 'strict', // Default: 'default' (no-op on missing scope)
+
+  // Queue
+  queue: {
+    maxSize: 1000,
+    dropPolicy: 'drop-lowest-tier',
+  },
 });
 ```
 
@@ -356,11 +608,17 @@ const finale = createFinale({
 
 ```typescript
 // Node runtime (AsyncLocalStorage)
-import { getScope } from '@finale/core';
-const scope = getScope();
+import { getScope } from '@finalejs/core';
+const scope = getScope(); // Returns no-op scope if none active (default mode)
 
-// Edge/explicit runtime
-import { withScope } from '@finale/core';
+// Check if scope is active
+import { hasScope } from '@finalejs/core';
+if (hasScope()) {
+  getScope().event.add({ ... });
+}
+
+// Explicit scope creation
+import { withScope } from '@finalejs/core';
 const result = await withScope(finale, async (scope) => {
   scope.event.add({ ... });
   return doWork();
@@ -370,29 +628,51 @@ const result = await withScope(finale, async (scope) => {
 ### Event Methods
 
 ```typescript
-// Add fields (can be called many times)
+// Core: add fields (can be called many times)
 scope.event.add({
   'user.id': userId,
   'org.id': orgId,
-  'feature.flags': ['beta-checkout'],
 });
+
+// Namespaced add (auto-prefixes keys)
+const http = scope.event.child('http');
+http.add({ route: '/api/checkout', method: 'POST' });
+// Results in: 'http.route', 'http.method'
+
+// Convenience: add to specific group (helps sampling tier decisions)
+scope.event.addDomain({ 'user.id': userId });
+scope.event.addDiagnostics({ 'cache.hit': true });
 
 // Normalize and capture error
 scope.event.error(err, {
-  includeStack: process.env.NODE_ENV !== 'production'
+  includeStack: process.env.NODE_ENV !== 'production',
 });
 
-// Add breadcrumb annotation
+// Add breadcrumb annotation (capped list)
 scope.event.annotate('payment_started');
 scope.event.annotate('inventory_checked');
 
-// Get namespaced view (auto-prefixes keys)
-const dbEvent = scope.event.child('db');
-dbEvent.add({ query_count: 3, duration_ms: 45 });
-// Results in: 'db.query_count': 3, 'db.duration_ms': 45
-
 // Manual flush (usually handled by middleware)
-scope.event.flush({ outcome: 'success' });
+const receipt = scope.event.flush();
+```
+
+### Flush Receipt
+
+`flush()` returns a receipt for debugging/testing:
+
+```typescript
+interface FlushReceipt {
+  emitted: boolean;          // Was event sent to sink?
+  decision: SamplingDecision; // DROP, KEEP_*, reason
+  fieldsDropped: string[];   // Budget-dropped fields
+  fieldsRedacted: string[];  // Redacted fields
+  finalSize: number;         // Approximate bytes
+}
+
+// In tests:
+const receipt = scope.event.flush();
+expect(receipt.emitted).toBe(true);
+expect(receipt.decision.decision).toBe('KEEP_NORMAL');
 ```
 
 ### Timers
@@ -402,19 +682,25 @@ scope.timers.start('payment.authorize');
 // ... do work ...
 scope.timers.end('payment.authorize');
 // Adds 'timings.payment.authorize': <duration_ms> to event
+
+// Convenience: wrap async work
+const result = await scope.timers.measure('db.query', async () => {
+  return db.query(...);
+});
 ```
 
 ### HTTP Middleware
 
 ```typescript
-import { httpMiddleware } from '@finale/core';
+import { expressMiddleware } from '@finalejs/core';
 
-app.use(httpMiddleware(finale, {
+app.use(expressMiddleware(finale, {
   // Called at request start
   onRequest(scope, req) {
     scope.event.add({
       'http.route': req.path,
       'http.method': req.method,
+      'request.id': req.headers['x-request-id'] || crypto.randomUUID(),
     });
   },
 
@@ -424,122 +710,97 @@ app.use(httpMiddleware(finale, {
       'http.status_code': res.statusCode,
     });
   },
+
+  // Optional: extract trace context
+  extractTraceContext(req) {
+    return {
+      traceId: req.headers['x-trace-id'],
+      spanId: req.headers['x-span-id'],
+    };
+  },
 }));
 ```
 
-### Schema Definition
+### Field Definition with Schema Adapter
 
 ```typescript
+import { defineFields } from '@finalejs/core';
 import { z } from 'zod';
+import { zodAdapter, zodType } from '@finalejs/schema-zod';
 
-const schema = {
-  // Core (always present)
-  'service.name': z.string(),
-  'deployment.env': z.enum(['dev', 'staging', 'prod']),
-  'request.id': z.string(),
+const fields = defineFields({
+  'service.name': {
+    type: zodType(z.string()),
+    group: 'core',
+    sensitivity: 'safe',
+    cardinality: 'low',
+    priority: 'must-keep',
+  },
+  'user.id': {
+    type: zodType(z.string().optional()),
+    group: 'domain',
+    sensitivity: 'pii',
+    cardinality: 'high',
+    priority: 'important',
+    transform: 'allow',
+  },
+  // ... more fields
+});
 
-  // HTTP
-  'http.route': z.string(),
-  'http.method': z.string(),
-  'http.status_code': z.number().int(),
-  'http.duration_ms': z.number(),
-
-  // Domain
-  'user.id': z.string().optional(),
-  'org.id': z.string().optional(),
-  'feature.flags': z.array(z.string()).optional(),
-
-  // Error
-  'error.class': z.string().optional(),
-  'error.message': z.string().optional(),
-};
+const finale = createFinale({
+  fields,
+  schemaAdapter: zodAdapter,
+  sink: pinoSink(pino()),
+});
 ```
 
-### PII Policy
+### Typed Namespaces (Optional Ergonomics)
+
+For teams that want autocomplete without string keys:
 
 ```typescript
-const piiPolicy = {
-  // Patterns to always block
-  denyPatterns: [
-    /authorization/i,
-    /password/i,
-    /token/i,
-    /cookie/i,
-  ],
+// Generated or manually created from field registry
+const http = finale.namespace('http');
+const user = finale.namespace('user');
 
-  // Per-field rules
-  fieldRules: {
-    'user.id': { mode: 'allow' },
-    'user.email': { mode: 'drop' },
-    'payment.card_last4': { mode: 'allow' },
-    'payment.idempotency_key': { mode: 'hash' },
-  },
-};
-```
-
-### Sampling Policy
-
-```typescript
-const samplingPolicy = {
-  decide(event: FinalizedEvent): SamplingDecision {
-    // Always keep errors
-    if (event['error.class']) {
-      return { decision: 'KEEP_DEBUG', reason: 'error' };
-    }
-
-    // Keep slow requests
-    if (event['http.duration_ms'] >= 1500) {
-      return { decision: 'KEEP_NORMAL', reason: 'slow' };
-    }
-
-    // Keep VIP traffic
-    if (event['user.is_vip']) {
-      return { decision: 'KEEP_NORMAL', reason: 'vip' };
-    }
-
-    // Sample successes at 1%
-    return Math.random() < 0.01
-      ? { decision: 'KEEP_MINIMAL', reason: 'sampled' }
-      : { decision: 'DROP', reason: 'sampled_out' };
-  },
-
-  // Map decisions to field groups
-  tiers: {
-    KEEP_MINIMAL: { include: ['core', 'http', 'correlation'] },
-    KEEP_NORMAL: { include: ['core', 'http', 'correlation', 'domain'] },
-    KEEP_DEBUG: { include: ['core', 'http', 'correlation', 'domain', 'error', 'diagnostics'] },
-  },
-};
+// Usage
+scope.event.add(http.fields({
+  route: '/api/checkout',
+  method: 'POST',
+  statusCode: 200,
+}));
+// Results in: 'http.route', 'http.method', 'http.status_code'
 ```
 
 ---
 
-## 7. Integration Points
+## 9. Integration Points
 
-### HTTP Frameworks
+### V1 Golden Path
 
-| Framework | Support |
-|-----------|---------|
-| Express | v1 (first-class) |
-| Fastify | v1 (adapter) |
-| Nest.js | v2 |
-| Next.js API Routes | v1 (Node runtime) |
-| Next.js Edge | v2 (explicit scoping) |
+**Primary target**: Node.js backend with Express or Next.js API routes.
+
+| Component | V1 Support |
+|-----------|------------|
+| Express middleware | First-class |
+| Next.js API routes (Node) | First-class |
+| Pino sink | First-class |
+| Console sink | First-class |
+| AsyncLocalStorage scoping | First-class |
 
 ### Background Jobs
 
 ```typescript
-import { withJobScope } from '@finale/core';
+import { withJobScope } from '@finalejs/core';
 
 // BullMQ example
 worker.process(async (job) => {
-  return withJobScope(finale, job, async (scope) => {
-    scope.event.add({
-      'job.name': job.name,
-      'job.id': job.id,
-      'job.attempt': job.attemptsMade,
-    });
-
+  return withJobScope(finale, {
+    jobName: job.name,
+    jobId: job.id,
+    attempt: job.attemptsMade,
+  }, async (scope) => {
+    scope.event.add({ 'job.queue': 'checkout' });
     // ... process job ...
   });
 });
@@ -548,7 +809,7 @@ worker.process(async (job) => {
 ### Manual Scope
 
 ```typescript
-import { withScope } from '@finale/core';
+import { withScope } from '@finalejs/core';
 
 // CLI tool, library, custom entry point
 async function processFile(path: string) {
@@ -557,24 +818,23 @@ async function processFile(path: string) {
       'operation': 'file_process',
       'file.path': path,
     });
-
     // ... do work ...
-
-    scope.event.flush({ outcome: 'success' });
-  });
+  }); // Auto-flushes on scope exit
 }
 ```
 
 ---
 
-## 8. Developer Experience
+## 10. Developer Experience
 
 ### Validation Modes
 
 | Mode | Behavior | Use Case |
 |------|----------|----------|
-| `strict` | Throw/warn on unknown keys or wrong types | Development, CI |
+| `strict` | Warn on unknown keys, wrong types | Development, CI |
 | `soft` | Drop invalid fields, increment counters | Production |
+
+Note: In `strict` mode, warnings are logged but don't throw (unless `scopeMode: 'strict'` for scope errors).
 
 ### Debug Mode
 
@@ -593,12 +853,12 @@ const finale = createFinale({
 ### Testing Utilities
 
 ```typescript
-import { createTestSink, assertFields, assertNoField } from '@finale/test';
+import { createTestSink, assertFields, assertNoField } from '@finalejs/test';
 
 describe('checkout handler', () => {
   it('captures payment fields', async () => {
     const sink = createTestSink();
-    const finale = createFinale({ ..., sink });
+    const finale = createFinale({ fields, sink });
 
     await request(app).post('/api/checkout').send({ ... });
 
@@ -608,72 +868,185 @@ describe('checkout handler', () => {
       'payment.provider': 'stripe',
     });
     assertNoField(event, 'user.email'); // PII check
+
+    // Check sampling decision
+    const receipt = sink.lastReceipt();
+    expect(receipt.decision.decision).toBe('KEEP_NORMAL');
   });
 });
 ```
 
 ### Internal Metrics
 
-finale exposes counters for operational visibility:
-
 ```typescript
+finale.metrics.eventsEmitted      // Successfully handed to sink
+finale.metrics.eventsDropped      // Sampling DROP + backpressure
+finale.metrics.eventsSampledOut   // Specifically sampling DROP
 finale.metrics.fieldsDropped      // Budget enforcement
 finale.metrics.redactionsApplied  // PII redactions
 finale.metrics.schemaViolations   // Invalid field attempts
-finale.metrics.samplingDecisions  // { DROP: n, KEEP_*: n }
 finale.metrics.sinkFailures       // Emission failures
+finale.metrics.queueDrops         // Backpressure drops
+
+// Snapshot for export to Prometheus/OTel
+const snapshot = finale.metrics.snapshot();
 ```
 
 ---
 
-## 9. Complete Usage Example
+## 11. Complete Usage Example
 
 ```typescript
 import express from 'express';
 import pino from 'pino';
 import { z } from 'zod';
-import { createFinale, httpMiddleware, getScope } from '@finale/core';
-import { pinoSink } from '@finale/sinks-pino';
+import { createFinale, expressMiddleware, getScope, defineFields } from '@finalejs/core';
+import { zodAdapter, zodType } from '@finalejs/schema-zod';
+import { pinoSink } from '@finalejs/sink-pino';
 
-// 1. Define schema
-const schema = {
-  'service.name': z.string(),
-  'deployment.env': z.enum(['dev', 'staging', 'prod']),
-  'request.id': z.string(),
-  'trace.id': z.string().optional(),
-  'http.route': z.string(),
-  'http.method': z.string(),
-  'http.status_code': z.number().int(),
-  'http.duration_ms': z.number(),
-  'user.id': z.string().optional(),
-  'user.is_vip': z.boolean().optional(),
-  'org.id': z.string().optional(),
-  'checkout.cart_value_cents': z.number().int().optional(),
-  'feature.flags': z.array(z.string()).optional(),
-  'payment.provider': z.enum(['stripe', 'adyen']).optional(),
-  'payment.idempotency_key': z.string().optional(),
-  'payment.charge_id': z.string().optional(),
-  'error.class': z.string().optional(),
-  'error.message': z.string().optional(),
-};
-
-// 2. Define policies
-const piiPolicy = {
-  denyPatterns: [/authorization/i, /password/i, /token/i],
-  fieldRules: {
-    'user.id': { mode: 'allow' },
-    'payment.idempotency_key': { mode: 'hash' },
+// 1. Define fields with metadata
+const fields = defineFields({
+  // Core (always present)
+  'service.name': {
+    type: zodType(z.string()),
+    group: 'core',
+    sensitivity: 'safe',
+    cardinality: 'low',
+    priority: 'must-keep',
   },
-};
+  'deployment.env': {
+    type: zodType(z.enum(['dev', 'staging', 'prod'])),
+    group: 'core',
+    sensitivity: 'safe',
+    cardinality: 'low',
+    priority: 'must-keep',
+  },
+  'request.id': {
+    type: zodType(z.string()),
+    group: 'core',
+    sensitivity: 'safe',
+    cardinality: 'high',
+    priority: 'must-keep',
+  },
 
+  // HTTP
+  'http.route': {
+    type: zodType(z.string()),
+    group: 'core',
+    sensitivity: 'safe',
+    cardinality: 'low', // Routes should be low cardinality
+    priority: 'must-keep',
+  },
+  'http.method': {
+    type: zodType(z.string()),
+    group: 'core',
+    sensitivity: 'safe',
+    cardinality: 'low',
+    priority: 'must-keep',
+  },
+  'http.status_code': {
+    type: zodType(z.number().int()),
+    group: 'core',
+    sensitivity: 'safe',
+    cardinality: 'low',
+    priority: 'must-keep',
+  },
+  'http.duration_ms': {
+    type: zodType(z.number()),
+    group: 'core',
+    sensitivity: 'safe',
+    cardinality: 'medium',
+    priority: 'must-keep',
+  },
+
+  // Domain
+  'user.id': {
+    type: zodType(z.string().optional()),
+    group: 'domain',
+    sensitivity: 'pii',
+    cardinality: 'high',
+    priority: 'important',
+    transform: 'allow', // Org decision
+  },
+  'user.is_vip': {
+    type: zodType(z.boolean().optional()),
+    group: 'domain',
+    sensitivity: 'safe',
+    cardinality: 'low',
+    priority: 'important',
+  },
+  'org.id': {
+    type: zodType(z.string().optional()),
+    group: 'domain',
+    sensitivity: 'safe',
+    cardinality: 'medium',
+    priority: 'important',
+  },
+  'checkout.cart_value_cents': {
+    type: zodType(z.number().int().optional()),
+    group: 'domain',
+    sensitivity: 'safe',
+    cardinality: 'medium',
+    priority: 'optional',
+  },
+
+  // Payment
+  'payment.provider': {
+    type: zodType(z.enum(['stripe', 'adyen']).optional()),
+    group: 'domain',
+    sensitivity: 'safe',
+    cardinality: 'low',
+    priority: 'important',
+  },
+  'payment.idempotency_key': {
+    type: zodType(z.string().optional()),
+    group: 'domain',
+    sensitivity: 'pii',
+    cardinality: 'high',
+    priority: 'optional',
+    transform: 'hash', // Reduce sensitivity
+  },
+  'payment.charge_id': {
+    type: zodType(z.string().optional()),
+    group: 'domain',
+    sensitivity: 'safe',
+    cardinality: 'high',
+    priority: 'important',
+  },
+
+  // Error
+  'error.class': {
+    type: zodType(z.string().optional()),
+    group: 'error',
+    sensitivity: 'safe',
+    cardinality: 'low',
+    priority: 'must-keep',
+  },
+  'error.message': {
+    type: zodType(z.string().optional()),
+    group: 'error',
+    sensitivity: 'pii', // Messages might contain PII
+    cardinality: 'medium',
+    priority: 'must-keep',
+    transform: 'allow', // But we want to see them
+  },
+});
+
+// 2. Define sampling policy
 const samplingPolicy = {
   decide(event) {
-    if (event['error.class']) return { decision: 'KEEP_DEBUG' };
-    if (event['http.duration_ms'] >= 1500) return { decision: 'KEEP_NORMAL' };
-    if (event['user.is_vip']) return { decision: 'KEEP_NORMAL' };
+    if (event['error.class']) {
+      return { decision: 'KEEP_DEBUG', reason: 'error' };
+    }
+    if (event['http.duration_ms'] >= 1500) {
+      return { decision: 'KEEP_NORMAL', reason: 'slow' };
+    }
+    if (event['user.is_vip']) {
+      return { decision: 'KEEP_NORMAL', reason: 'vip' };
+    }
     return Math.random() < 0.01
-      ? { decision: 'KEEP_MINIMAL' }
-      : { decision: 'DROP' };
+      ? { decision: 'KEEP_MINIMAL', reason: 'sampled' }
+      : { decision: 'DROP', reason: 'sampled_out' };
   },
 };
 
@@ -681,8 +1054,8 @@ const samplingPolicy = {
 const logger = pino({ level: 'info' });
 
 const finale = createFinale({
-  schema,
-  pii: piiPolicy,
+  fields,
+  schemaAdapter: zodAdapter,
   sampling: samplingPolicy,
   sink: pinoSink(logger),
   defaults: {
@@ -696,7 +1069,7 @@ const finale = createFinale({
 const app = express();
 app.use(express.json());
 
-app.use(httpMiddleware(finale, {
+app.use(expressMiddleware(finale, {
   onRequest(scope, req) {
     scope.event.add({
       'http.route': req.path,
@@ -715,12 +1088,10 @@ app.use(httpMiddleware(finale, {
 app.post('/api/checkout', async (req, res) => {
   const scope = getScope();
 
-  // Add business context as it becomes known
   scope.event.add({
     'user.id': req.body.userId,
     'org.id': req.body.orgId,
     'checkout.cart_value_cents': req.body.cartValueCents,
-    'feature.flags': req.body.featureFlags ?? [],
     'user.is_vip': Boolean(req.body.isVip),
   });
 
@@ -740,86 +1111,83 @@ app.post('/api/checkout', async (req, res) => {
   } catch (err) {
     scope.timers.end('payment.authorize');
     scope.event.error(err);
-    scope.event.add({ 'payment.provider': 'stripe' });
     res.status(500).json({ ok: false });
   }
+  // Middleware auto-flushes ONE event
+});
 
-  // No manual logging - middleware flushes ONE event automatically
+// 6. Graceful shutdown
+process.on('SIGTERM', async () => {
+  await finale.drain({ timeoutMs: 5000 });
+  process.exit(0);
 });
 
 app.listen(3000);
 ```
 
-**Output (if sampled KEEP_NORMAL):**
-
-```json
-{
-  "service.name": "web-api",
-  "deployment.env": "prod",
-  "request.id": "req_abc123",
-  "http.route": "/api/checkout",
-  "http.method": "POST",
-  "http.status_code": 200,
-  "http.duration_ms": 412,
-  "user.id": "usr_123",
-  "user.is_vip": true,
-  "org.id": "org_9",
-  "checkout.cart_value_cents": 2599,
-  "feature.flags": ["new-checkout"],
-  "payment.provider": "stripe",
-  "payment.idempotency_key": "hash:a1b2c3...",
-  "payment.charge_id": "ch_xyz789",
-  "timings.payment.authorize": 153,
-  "timings.total": 412
-}
-```
-
 ---
 
-## 10. Minimum Lovable V1
+## 12. Minimum Lovable V1
 
-### Include in V1
+### V1 Golden Path
 
-| Feature | Description |
-|---------|-------------|
-| Event API | `add()`, `flush()`, `error()`, `annotate()`, `child()` |
-| Timers | `start()`, `end()` for phase timings |
-| Node Scoping | AsyncLocalStorage-based `getScope()` |
-| HTTP Middleware | Express adapter with auto-flush |
-| Schema Registry | Typed fields with Zod integration |
-| Validation | Strict/soft modes |
-| PII Rules | Field-level allow/drop/hash |
-| Basic Budgets | Max keys, max size enforcement |
-| Tail Sampling | DROP/MINIMAL/NORMAL/DEBUG tiers |
-| Pino Sink | First-class adapter |
-| Console Sink | Dev/debug output |
-| Test Sink | In-memory capture + assertions |
-| Debug Mode | Sampling/redaction visibility |
+**Target**: Node.js + Express + pino + AsyncLocalStorage
+
+| Feature | Status |
+|---------|--------|
+| `createFinale()` | V1 |
+| `getScope()` / `hasScope()` / `withScope()` | V1 |
+| `scope.event.add()` / `.child()` / `.error()` / `.annotate()` | V1 |
+| `scope.timers.start()` / `.end()` / `.measure()` | V1 |
+| `flush()` with receipt | V1 |
+| Express middleware with auto-flush | V1 |
+| Field registry with metadata | V1 |
+| Schema adapter interface | V1 |
+| `@finalejs/schema-zod` adapter | V1 |
+| Validation strict/soft modes | V1 |
+| Redaction engine (field rules) | V1 |
+| Budget enforcer | V1 |
+| Tail sampling (4 tiers) | V1 |
+| `@finalejs/sink-pino` | V1 |
+| `@finalejs/sink-console` | V1 |
+| `@finalejs/test` (test sink + assertions) | V1 |
+| Debug mode | V1 |
+| Metrics counters | V1 |
+| `drain()` for graceful shutdown | V1 |
+| No-op scope on missing context | V1 |
+| Stackable nested scopes | V1 |
 
 ### Defer to V2+
 
 | Feature | Rationale |
 |---------|-----------|
-| Edge runtime scoping | Requires explicit context passing design |
-| Winston sink | Lower priority than pino |
+| Edge runtime explicit scoping | Requires different propagation model |
+| Next.js Edge / Cloudflare Workers | After Node proves out |
+| `@finalejs/sink-winston` | Lower priority than pino |
 | OTel log export | JS logs API still unstable |
-| Lint rules | Nice-to-have after core stabilizes |
-| Docs generation | Post-adoption feature |
+| Typed namespace codegen | Nice-to-have after adoption |
+| Lint rules for field keys | Post-stabilization |
+| Docs generation from registry | Post-adoption |
 | GraphQL integration | After HTTP proves out |
-| Partial flush | Rare use case, adds complexity |
+| Partial/milestone flush | Complexity, rare use case |
+| Direct HTTP sink with retries | Use local collector instead |
 
 ---
 
-## 11. Open Questions
+## 13. Open Questions (Resolved)
 
-1. **Package naming**: Is `@finale/core` available on npm?
-2. **Zod dependency**: Should schema validation be Zod-native or bring-your-own-validator?
-3. **Sink batching**: Should the core library handle async batching or leave to sink implementations?
-4. **Metrics export**: Should internal counters be exportable to Prometheus/OTel metrics?
+| Question | Decision |
+|----------|----------|
+| Package naming | Use `@finalejs/*` (check availability, have backup) |
+| Zod dependency | **Decoupled**. Core has schema adapter interface. Zod is optional via `@finalejs/schema-zod`. |
+| Sink batching | Core provides async queue + backpressure. Sinks are simple `emit()`. |
+| Metrics export | Expose `.metrics.snapshot()` for integration with Prometheus/OTel. |
+| Scope failure mode | **No-op by default** + optional strict mode. |
+| Nesting | **Stackable** scopes. `getScope()` returns top of stack. |
 
 ---
 
-## 12. References
+## 14. References
 
 - [loggingsucks.com](https://loggingsucks.com) - Inspiration for the wide events pattern
 - [Stripe Canonical Log Lines](https://stripe.com/blog/canonical-log-lines) - Production implementation
