@@ -99,6 +99,18 @@ export interface SamplingDecision {
 }
 
 /**
+ * Embedded milestone for long-running and LLM-oriented workflows.
+ */
+export interface SubEvent {
+  /** Milestone name (for example: llm.step.completed) */
+  name: string;
+  /** Timestamp in milliseconds since unix epoch */
+  timestamp: number;
+  /** Optional milestone-scoped fields */
+  fields?: Record<string, unknown>;
+}
+
+/**
  * Finalized event ready for sampling decision.
  */
 export interface FinalizedEvent {
@@ -106,6 +118,8 @@ export interface FinalizedEvent {
   fields: Record<string, unknown>;
   /** Timing data */
   timings: Record<string, number>;
+  /** Embedded milestones captured during request/workflow execution */
+  subEvents?: SubEvent[];
   /** Metadata added by finale */
   metadata: EventMetadata;
 }
@@ -218,6 +232,8 @@ export interface EventAPI {
   error(err: unknown, options?: ErrorCaptureOptions): void;
   /** Add a breadcrumb annotation */
   annotate(tag: string): void;
+  /** Add an embedded milestone to the current event */
+  subEvent(name: string, fields?: Record<string, unknown>): void;
   /** Manually flush the event (usually handled by middleware) */
   flush(): FlushReceipt;
 }

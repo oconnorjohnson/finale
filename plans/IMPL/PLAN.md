@@ -222,6 +222,16 @@ Define the type contracts before implementing logic:
 - `createTestSink()` - in-memory capture
 - `assertFields()`, `assertNoField()`, `assertSamplingDecision()`
 
+### Deferred Package Direction: @finalejs/query-helpers
+- Do not ship in V1 while core ergonomics and reliability are still being hardened
+- Define future package scope now: platform-oriented field extraction, prettification presets, and query template helpers for common logging backends
+- Keep this package additive so teams can adopt helpers without changing instrumentation call sites
+
+### V1 Forward-Compatibility Requirements (for future query helpers)
+- Keep canonical event envelope and `_finale.*` metadata keys documented and stable
+- Ensure sink adapters preserve event structure and metadata keys without backend-specific mutation
+- Add query fixture docs/examples that use only canonical field names so future helper APIs can wrap existing behavior rather than replace it
+
 ---
 
 ## Phase 10: Product Shape - Dual Showcase Tracks
@@ -262,6 +272,7 @@ For each family, add:
 - baseline field definitions
 - safety and cardinality expectations
 - example query and assertion fixtures
+- platform-oriented query fixtures that can be lifted directly into future `@finalejs/query-helpers` templates
 
 ---
 
@@ -313,6 +324,7 @@ For each family, add:
 - Backward compatibility and deprecation policy execution
 - Ongoing compatibility test upkeep (Node/TypeScript/integration targets)
 - Roadmap process for optional advanced observability features
+- Roadmap execution for deferred `@finalejs/query-helpers` once core API/sink stability criteria are met
 - Triage flow for bug, security, and adoption issues
 
 ---

@@ -20,3 +20,56 @@
 - Resolved initial lint blockers in placeholder files by removing/renaming unused symbols in `packages/test/src/test-sink.ts` and `packages/schema-zod/src/adapter.ts`.
 - Updated package test scripts to `vitest run --passWithNoTests` across all five packages so Phase 0 CI-style verification can pass before Phase 1 test suites are introduced.
 - Ran and passed: `pnpm lint`, `pnpm typecheck`, `pnpm build`, and `pnpm test` from the repository root after dependency install refresh.
+
+## 2026-02-28 12:50:53 PST
+
+- Completed Phase 1 + Phase 2 implementation in `@finalejs/core` by adding missing core type contracts and runtime scope management primitives.
+- Extended `packages/core/src/types/index.ts` with `SubEvent` and `EventAPI.subEvent()` to align with the IMPL contract for embedded milestones.
+- Added runtime modules under `packages/core/src/runtime/`:
+  - `noop-scope.ts` for safe no-op fallback behavior
+  - `lifecycle.ts` for `startScope()` / `endScope()` orchestration
+  - `scope-manager.ts` for AsyncLocalStorage stack semantics with `getScope()`, `hasScope()`, and `withScope()`
+- Exported runtime APIs through `packages/core/src/runtime/index.ts` and `packages/core/src/index.ts` so downstream phases can consume them directly.
+- Added comprehensive Vitest coverage for Phase 1/2 in:
+  - `packages/core/src/types/index.test.ts`
+  - `packages/core/src/runtime/noop-scope.test.ts`
+  - `packages/core/src/runtime/lifecycle.test.ts`
+  - `packages/core/src/runtime/scope-manager.test.ts`
+- Verified full workspace health with passing `pnpm lint`, `pnpm typecheck`, `pnpm test`, and `pnpm build`.
+
+## 2026-02-28 12:58:47 PST
+
+- Completed Phase 3 (Event Accumulation Layer) by adding `packages/core/src/accumulation/` modules for `EventStore`, `TimerManager`, `ErrorCapture`, and `AccumulationScope`.
+- Implemented accumulation semantics and constraints:
+  - scalar last-write behavior with additive numeric counters
+  - array append with max-length caps
+  - key/size/string limits and dropped-field tracking
+  - embedded sub-event capture with count and per-sub-event field caps
+- Wired runtime lifecycle to create `AccumulationScope` by default in `startScope()` while preserving explicit override support for test-controlled scopes.
+- Exported accumulation API through `packages/core/src/accumulation/index.ts` and top-level `packages/core/src/index.ts`.
+- Added comprehensive Phase 3 Vitest coverage:
+  - `accumulation/event-store.test.ts`
+  - `accumulation/timer-manager.test.ts`
+  - `accumulation/error-capture.test.ts`
+  - `accumulation/scope.test.ts`
+  - plus runtime lifecycle coverage update for real-scope default behavior
+- Verified workspace checks pass after implementation: `pnpm lint`, `pnpm typecheck`, `pnpm test`, and `pnpm build`.
+
+## 2026-02-28 13:04:33 PST
+
+- Verified and fixed a merge asymmetry bug in `packages/core/src/accumulation/event-store.ts`: scalar-to-array updates previously replaced the scalar and could drop historical context, while array-to-scalar accumulated.
+- Updated `mergeValues()` so any array/scalar transition now normalizes both sides to arrays and appends consistently with max-length capping.
+- Added regression coverage in `packages/core/src/accumulation/event-store.test.ts` (`preserves prior scalar value when incoming value is an array`) to lock expected accumulation semantics.
+- Ran targeted verification with `pnpm --filter @finalejs/core test` (all core tests passing).
+
+## 2026-02-28 13:02:04 PST
+
+- Reviewed whether planning docs should add helper support for custom or pre-existing logging platforms to improve extraction, prettification, and search of finale events.
+- Confirmed current plans already cover core sink adapters and queryability outcomes, but do not yet explicitly define platform-focused DX helpers/playbooks for easier operator adoption.
+- Recommendation direction: add a scoped “integration/query helper” track (formatters, field extraction recipes, query templates) without expanding core V1 runtime contracts.
+
+## 2026-02-28 13:04:32 PST
+
+- Applied the deferred package strategy to both plans by introducing `@finalejs/query-helpers` as post-V1 work that starts after core surface area is stable.
+- Added explicit V1 forward-compatibility constraints now (stable canonical envelope, stable `_finale.*` metadata keys, sink preservation of canonical event structure) to reduce future migration risk when helpers launch.
+- Updated implementation planning to include platform-oriented query fixtures and roadmap gating so future helper APIs can be additive instead of forcing instrumentation rewrites.

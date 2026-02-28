@@ -2,3 +2,5 @@
 
 // Types will be exported here
 export * from './types/index.js';
+export * from './accumulation/index.js';
+export * from './runtime/index.js';

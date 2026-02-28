@@ -28,7 +28,10 @@ finale is **not a logger**. It is an instrumentation layer that:
 @finalejs/sink-pino      # Pino adapter
 @finalejs/sink-console   # Dev/debug pretty-print
 @finalejs/test           # Testing utilities
+@finalejs/query-helpers  # Deferred package: platform query/extraction helpers
 ```
+
+`@finalejs/query-helpers` is intentionally deferred until core ergonomics and reliability are proven, but it is a planned package direction.
 
 ---
 
@@ -1210,6 +1213,7 @@ app.listen(3000);
 | Edge runtime explicit scoping     | Requires different propagation model |
 | Next.js Edge / Cloudflare Workers | After Node proves out                |
 | `@finalejs/sink-winston`          | Lower priority than pino             |
+| `@finalejs/query-helpers`         | Build after core API and sink surface stabilizes |
 | OTel log export                   | JS logs API still unstable           |
 | Typed namespace codegen           | Nice-to-have after adoption          |
 | Lint rules for field keys         | Post-stabilization                   |
@@ -1230,6 +1234,7 @@ app.listen(3000);
 | Metrics export     | Expose `.metrics.snapshot()` for integration with Prometheus/OTel.                            |
 | Scope failure mode | **No-op by default** + optional strict mode.                                                  |
 | Nesting            | **Stackable** scopes. `getScope()` returns top of stack.                                      |
+| Platform query helpers | Ship as deferred package (`@finalejs/query-helpers`) after V1; keep metadata keys and event envelope stable in V1 so helper adoption does not require breaking core changes. |
 
 ---
 
@@ -1331,6 +1336,7 @@ To support OSS adoption, finale should publish explicit runtime and release poli
 - Follow semantic versioning for all `@finalejs/*` packages.
 - Document public API boundaries and treat internal modules as non-contract.
 - Use deprecation notices before removal for user-facing APIs and field contracts.
+- Preserve documented `_finale.*` metadata keys and canonical event envelope shape to support future platform helper tooling without disruptive migration.
 
 ### Security and Supply Chain
 
