@@ -1414,3 +1414,54 @@ It’s not a full “log pipeline.” It’s the app-side front end: capture →
 The punchline
 
 Your library’s job is to make it trivially easy for app code to conglomerate context into one event, and then make emission cheap and policy-driven. Where it ultimately lands (console, vector, OTel Collector, Honeycomb, Datadog, etc.) is just a sink choice.
+
+---
+
+## Appendix: Decision-to-Obligation (Product Simplicity + LLM Flexibility)
+
+This appendix converts design intent into delivery obligations so planning stays aligned with product essence.
+
+### 1) Rich context is a product contract, not an implementation detail
+
+Decision:
+- finale should produce events that explain business outcomes, not only technical status.
+
+Obligation:
+- V1 planning and implementation must include first-class coverage for HTTP, identity/tenant, dependency operations, feature/release, LLM, error/retry, and runtime/deploy context.
+
+### 2) LLM observability should be first-class and self-hostable
+
+Decision:
+- finale should be a go-to option for simple, infra-owned LLM observability.
+
+Obligation:
+- V1 must ship an LLM workflow showcase equal to the classic API showcase and include tests for step, tool, and token/cost visibility.
+- The design should avoid hosted-platform coupling and preserve local operator control.
+
+### 3) Simplicity-first default with explicit flexibility
+
+Decision:
+- one primary event remains the default mental model.
+- teams can opt into out-of-band milestones when operationally necessary.
+
+Obligation:
+- optional milestone emission must be clearly opt-in and should not complicate base API ergonomics.
+- docs must provide clear criteria for when to remain embedded versus when to emit milestones.
+
+### 4) Queryability is the acceptance test
+
+Decision:
+- the success bar is whether operators can answer high-value questions without log archaeology.
+
+Obligation:
+- PRD and IMPL should define canonical query scenarios for both API and LLM workflows.
+- verification should assert these scenarios directly (not only internal unit behavior).
+
+### 5) Safety defaults are release-critical
+
+Decision:
+- PII and cardinality guardrails are part of the core value proposition.
+
+Obligation:
+- regressions in redaction, field safety posture, or budget controls should be treated as release-blocking defects.
+- optional flexibility should never bypass safety by default.
