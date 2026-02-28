@@ -5,6 +5,8 @@ import { validateFields, type ValidationIssue, type ValidationMode } from '../go
 import type { FieldRegistry } from '../types/index.js';
 import { BudgetEnforcer } from '../safety/budget-enforcer.js';
 import { RedactionEngine, type RedactionEngineOptions } from '../safety/redaction-engine.js';
+import { applyVerbosityFilter } from '../sampling/verbosity-filter.js';
+import { decideSampling, type PolicyEngineOptions } from '../sampling/policy-engine.js';
 import type {
   EventAPI,
   FlushReceipt,
@@ -19,6 +21,7 @@ export type ScopeOptions = EventStoreOptions & {
   validationMode?: ValidationMode;
   onValidationIssue?: (issue: ValidationIssue) => void;
   safety?: Omit<RedactionEngineOptions, 'fieldRegistry'>;
+  sampling?: PolicyEngineOptions;
 };
 
 export class AccumulationScope implements Scope {
@@ -32,6 +35,7 @@ export class AccumulationScope implements Scope {
   private readonly onValidationIssue: ((issue: ValidationIssue) => void) | undefined;
   private readonly budgetEnforcer: BudgetEnforcer;
   private readonly redactionEngine: RedactionEngine;
+  private readonly sampling: PolicyEngineOptions | undefined;
   private lastFinalizedEvent?: FinalizedEvent;
   private readonly validationDroppedFields = new Set<string>();
 
@@ -45,6 +49,7 @@ export class AccumulationScope implements Scope {
       ...(this.fieldRegistry ? { fieldRegistry: this.fieldRegistry } : {}),
       ...(options.safety?.scanner ? { scanner: options.safety.scanner } : {}),
     });
+    this.sampling = options.sampling;
     this.budgetEnforcer = new BudgetEnforcer({
       ...(this.fieldRegistry ? { fieldRegistry: this.fieldRegistry } : {}),
       ...(options.limits ? { limits: options.limits } : {}),
@@ -117,17 +122,24 @@ export class AccumulationScope implements Scope {
       finalizedEvent.metadata.dropReason = budgetResult.dropReason;
     }
 
-    this.lastFinalizedEvent = finalizedEvent;
+    const samplingDecision = decideSampling(finalizedEvent, this.sampling);
+    finalizedEvent.metadata.samplingDecision = samplingDecision.decision;
+    if (samplingDecision.reason) {
+      finalizedEvent.metadata.samplingReason = samplingDecision.reason;
+    }
+
+    const filteredEvent = applyVerbosityFilter(finalizedEvent, samplingDecision.decision, {
+      ...(this.fieldRegistry ? { fieldRegistry: this.fieldRegistry } : {}),
+    });
+
+    this.lastFinalizedEvent = filteredEvent;
 
     return {
       emitted: false,
-      decision: {
-        decision: 'KEEP_NORMAL',
-        reason: 'accumulated_not_emitted',
-      },
-      fieldsDropped: finalizedEvent.metadata.droppedFields ?? [],
-      fieldsRedacted: finalizedEvent.metadata.redactedFields ?? [],
-      finalSize: Buffer.byteLength(JSON.stringify(finalizedEvent)),
+      decision: samplingDecision,
+      fieldsDropped: filteredEvent.metadata.droppedFields ?? [],
+      fieldsRedacted: filteredEvent.metadata.redactedFields ?? [],
+      finalSize: Buffer.byteLength(JSON.stringify(filteredEvent)),
     };
   }
 

@@ -115,3 +115,27 @@
   - updated `accumulation/scope.test.ts` with safety integration assertions.
 - Resolved `exactOptionalPropertyTypes` regressions in safety constructor/return shapes and calibrated sub-event trimming test budget to validate deterministic behavior.
 - Verified workspace checks pass: `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm build`.
+
+## 2026-02-28 13:53:13 PST
+
+- Completed Phase 6 (Tail-Sampling Layer) in `@finalejs/core` by adding `packages/core/src/sampling/` modules: `policy-engine.ts`, `verbosity-filter.ts`, `default-policy.ts`, and barrel exports.
+- Implemented sampling policy execution with backward-compatible fallback behavior (`KEEP_NORMAL` / `accumulated_not_emitted`) when sampling is not configured, so existing integrations do not unexpectedly drop events.
+- Implemented configurable default sampling policy (`createDefaultSamplingPolicy`) with outcomes:
+  - error -> `KEEP_DEBUG`
+  - slow request/timing over threshold -> `KEEP_NORMAL`
+  - success -> probabilistic `KEEP_MINIMAL` vs `DROP`.
+- Implemented verbosity filtering by tier using field metadata groups:
+  - `KEEP_MINIMAL`: core-only fields
+  - `KEEP_NORMAL`: core + domain
+  - `KEEP_DEBUG`: all fields
+  - `DROP`: empty payload
+  with minimal-tier critical sub-event filtering.
+- Integrated sampling into `AccumulationScope.flush()` after safety passes (finalize -> redaction -> budget -> sampling decision -> verbosity filter), and now persist `samplingDecision`/`samplingReason` into finalized event metadata.
+- Updated `FlushReceipt.decision` to return the real sampling decision instead of hardcoded `KEEP_NORMAL`.
+- Exported sampling API from `packages/core/src/index.ts`.
+- Added comprehensive Vitest coverage:
+  - `sampling/policy-engine.test.ts`
+  - `sampling/default-policy.test.ts`
+  - `sampling/verbosity-filter.test.ts`
+  - updated `accumulation/scope.test.ts` with sampling decision/metadata and `KEEP_MINIMAL` filtering assertions.
+- Verified workspace checks pass after Phase 6 changes: `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm build`.

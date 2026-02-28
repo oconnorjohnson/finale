@@ -169,4 +169,50 @@ describe('accumulation scope', () => {
     expect(scope.getLastFinalizedEvent()?.fields.dropMe).toBeUndefined();
     expect(receipt.fieldsDropped).toContain('dropMe');
   });
+
+  it('applies sampling decision and metadata from custom policy', () => {
+    const scope = new AccumulationScope({
+      sampling: {
+        policy: {
+          decide: () => ({ decision: 'KEEP_DEBUG', reason: 'forced' }),
+        },
+      },
+    });
+
+    scope.event.add({ 'request.id': 'req_1' });
+    const receipt = scope.event.flush();
+    const event = scope.getLastFinalizedEvent();
+
+    expect(receipt.decision).toEqual({ decision: 'KEEP_DEBUG', reason: 'forced' });
+    expect(event?.metadata.samplingDecision).toBe('KEEP_DEBUG');
+    expect(event?.metadata.samplingReason).toBe('forced');
+  });
+
+  it('filters event payload for keep-minimal tier', () => {
+    const scope = new AccumulationScope({
+      fieldRegistry: {
+        'request.id': makeField(stringSchema()),
+        'user.id': {
+          ...makeField(stringSchema()),
+          group: 'domain',
+        },
+      },
+      sampling: {
+        policy: {
+          decide: () => ({ decision: 'KEEP_MINIMAL', reason: 'sampled' }),
+        },
+      },
+    });
+
+    scope.event.add({
+      'request.id': 'req_1',
+      'user.id': 'usr_1',
+      unknown: true,
+    });
+    const receipt = scope.event.flush();
+    const event = scope.getLastFinalizedEvent();
+
+    expect(receipt.decision.decision).toBe('KEEP_MINIMAL');
+    expect(event?.fields).toEqual({ 'request.id': 'req_1' });
+  });
 });

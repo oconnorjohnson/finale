@@ -6,3 +6,4 @@ export * from './accumulation/index.js';
 export * from './governance/index.js';
 export * from './runtime/index.js';
 export * from './safety/index.js';
+export * from './sampling/index.js';
