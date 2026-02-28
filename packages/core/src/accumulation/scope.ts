@@ -1,6 +1,8 @@
 import { captureErrorFields } from './error-capture.js';
 import { EventStore, type EventStoreOptions } from './event-store.js';
 import { TimerManager } from './timer-manager.js';
+import { validateFields, type ValidationIssue, type ValidationMode } from '../governance/validation.js';
+import type { FieldRegistry } from '../types/index.js';
 import type {
   EventAPI,
   FlushReceipt,
@@ -10,7 +12,11 @@ import type {
   FinalizedEvent,
 } from '../types/index.js';
 
-export type ScopeOptions = EventStoreOptions;
+export type ScopeOptions = EventStoreOptions & {
+  fieldRegistry?: FieldRegistry;
+  validationMode?: ValidationMode;
+  onValidationIssue?: (issue: ValidationIssue) => void;
+};
 
 export class AccumulationScope implements Scope {
   public readonly event: EventAPI;
@@ -18,15 +24,22 @@ export class AccumulationScope implements Scope {
 
   private readonly eventStore: EventStore;
   private readonly timerManager: TimerManager;
+  private readonly fieldRegistry: FieldRegistry | undefined;
+  private readonly validationMode: ValidationMode;
+  private readonly onValidationIssue: ((issue: ValidationIssue) => void) | undefined;
   private lastFinalizedEvent?: FinalizedEvent;
+  private readonly validationDroppedFields = new Set<string>();
 
   constructor(options: ScopeOptions = {}) {
     this.eventStore = new EventStore(options);
     this.timerManager = new TimerManager();
+    this.fieldRegistry = options.fieldRegistry;
+    this.validationMode = options.validationMode ?? 'soft';
+    this.onValidationIssue = options.onValidationIssue;
 
     this.event = {
       add: (fields) => {
-        this.eventStore.add(fields);
+        this.eventStore.add(this.validateIncomingFields(fields));
       },
       child: (namespace) => this.createNamespacedApi(namespace),
       error: (err, options) => {
@@ -58,7 +71,7 @@ export class AccumulationScope implements Scope {
         const prefixedFields = Object.fromEntries(
           Object.entries(fields).map(([key, value]) => [`${namespace}.${key}`, value])
         );
-        this.eventStore.add(prefixedFields);
+        this.eventStore.add(this.validateIncomingFields(prefixedFields));
       },
     };
   }
@@ -73,9 +86,28 @@ export class AccumulationScope implements Scope {
         decision: 'KEEP_NORMAL',
         reason: 'accumulated_not_emitted',
       },
-      fieldsDropped: this.eventStore.getDroppedFields(),
+      fieldsDropped: [...this.eventStore.getDroppedFields(), ...this.validationDroppedFields],
       fieldsRedacted: [],
       finalSize: Buffer.byteLength(JSON.stringify(finalizedEvent)),
     };
+  }
+
+  private validateIncomingFields(fields: Record<string, unknown>): Record<string, unknown> {
+    if (!this.fieldRegistry) {
+      return fields;
+    }
+
+    const result = validateFields({
+      fields,
+      registry: this.fieldRegistry,
+      mode: this.validationMode,
+      ...(this.onValidationIssue ? { onIssue: this.onValidationIssue } : {}),
+    });
+
+    for (const key of result.dropped) {
+      this.validationDroppedFields.add(key);
+    }
+
+    return result.accepted;
   }
 }

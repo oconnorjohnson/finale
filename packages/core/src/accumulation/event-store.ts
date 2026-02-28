@@ -90,10 +90,8 @@ export class EventStore {
     }
 
     const normalizedIncoming = this.normalizeValue(incomingValue);
-    const current = this.fields[key];
-    const merged = this.mergeValues(current, normalizedIncoming);
-
     const previous = this.fields[key];
+    const merged = this.mergeValues(previous, normalizedIncoming);
     this.fields[key] = merged;
 
     if (estimateSize(this.fields) > this.limits.maxTotalSize) {

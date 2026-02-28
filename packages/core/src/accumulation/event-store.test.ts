@@ -69,4 +69,33 @@ describe('event store', () => {
     expect(finalized.subEvents?.[0]?.name).toBe('llm.step.started');
     expect(finalized.subEvents?.[0]?.fields).toEqual({ a: 1 });
   });
+
+  it('rolls back merged value when max total size is exceeded for existing key', () => {
+    const store = new EventStore({
+      limits: {
+        maxTotalSize: 40,
+      },
+    });
+
+    store.add({ message: 'ok' });
+    store.add({ message: 'this-value-is-too-large-for-the-limit' });
+
+    expect(store.getFields().message).toBe('ok');
+    expect(store.getDroppedFields()).toContain('message');
+  });
+
+  it('removes newly added key when max total size is exceeded', () => {
+    const store = new EventStore({
+      limits: {
+        maxTotalSize: 40,
+      },
+    });
+
+    store.add({ one: 'ok' });
+    store.add({ two: 'this-value-is-too-large-for-the-limit' });
+
+    expect(store.getFields().one).toBe('ok');
+    expect(store.getFields().two).toBeUndefined();
+    expect(store.getDroppedFields()).toContain('two');
+  });
 });

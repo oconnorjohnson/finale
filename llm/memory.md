@@ -62,6 +62,32 @@
 - Added regression coverage in `packages/core/src/accumulation/event-store.test.ts` (`preserves prior scalar value when incoming value is an array`) to lock expected accumulation semantics.
 - Ran targeted verification with `pnpm --filter @finalejs/core test` (all core tests passing).
 
+## 2026-02-28 13:10:03 PST
+
+- Completed Phase 4 (Governance Layer) by adding `packages/core/src/governance/` with `field-registry.ts`, `schema-adapter.ts`, `validation.ts`, and module exports.
+- Implemented `defineFields()` and `FieldRegistryStore` with `has/get/keys/queryNamespace` to enforce centralized field governance and namespace discovery.
+- Implemented validation engine with strict/soft modes:
+  - strict keeps values but reports unknown/type issues
+  - soft drops invalid/unknown fields and reports dropped keys
+- Integrated validation into `AccumulationScope.event.add()` (and namespaced `child().add()`), with backward-compatible pass-through when no field registry is configured.
+- Added optional governance integration hooks in `ScopeOptions` (`fieldRegistry`, `validationMode`, `onValidationIssue`) and merged governance drops into flush receipts.
+- Exported governance API from `packages/core/src/index.ts` for downstream phases/packages.
+- Added comprehensive governance tests:
+  - `governance/field-registry.test.ts`
+  - `governance/schema-adapter.test.ts`
+  - `governance/validation.test.ts`
+  - updated `accumulation/scope.test.ts` for strict/soft/backward-compat integration behavior
+- Verified workspace checks all pass: `pnpm lint`, `pnpm typecheck`, `pnpm test`, and `pnpm build`.
+
+## 2026-02-28 13:28:41 PST
+
+- Reviewed and addressed `setField` rollback concern in `packages/core/src/accumulation/event-store.ts`.
+- Simplified `setField` to capture prior field state once (`previous`) and use it both for merge calculation and rollback, removing duplicate reads and making rollback intent explicit.
+- Added explicit rollback regression tests in `packages/core/src/accumulation/event-store.test.ts`:
+  - restores prior value when an existing key update exceeds `maxTotalSize`
+  - deletes newly-added key when insert exceeds `maxTotalSize`
+- Ran focused validation: `pnpm --filter @finalejs/core test` (all core tests passing).
+
 ## 2026-02-28 13:02:04 PST
 
 - Reviewed whether planning docs should add helper support for custom or pre-existing logging platforms to improve extraction, prettification, and search of finale events.
