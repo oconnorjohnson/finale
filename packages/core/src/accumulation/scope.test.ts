@@ -124,4 +124,49 @@ describe('accumulation scope', () => {
     });
     expect(issues).toHaveBeenCalledTimes(2);
   });
+
+  it('runs safety redaction pipeline and reports redacted fields', () => {
+    const scope = new AccumulationScope({
+      fieldRegistry: {
+        token: {
+          ...makeField(stringSchema()),
+          transform: 'mask',
+        },
+      },
+    });
+
+    scope.event.add({ token: 'secret-token' });
+    const receipt = scope.event.flush();
+
+    expect(scope.getLastFinalizedEvent()?.fields.token).toBe('[REDACTED]');
+    expect(receipt.fieldsRedacted).toContain('token');
+  });
+
+  it('enforces safety budget and reports dropped fields in receipt', () => {
+    const scope = new AccumulationScope({
+      fieldRegistry: {
+        keep: {
+          ...makeField(stringSchema()),
+          priority: 'must-keep',
+        },
+        dropMe: {
+          ...makeField(stringSchema()),
+          priority: 'drop-first',
+        },
+      },
+      limits: {
+        maxTotalSize: 100,
+      },
+    });
+
+    scope.event.add({
+      keep: 'x'.repeat(60),
+      dropMe: 'x'.repeat(60),
+    });
+    const receipt = scope.event.flush();
+
+    expect(scope.getLastFinalizedEvent()?.fields.keep).toBeDefined();
+    expect(scope.getLastFinalizedEvent()?.fields.dropMe).toBeUndefined();
+    expect(receipt.fieldsDropped).toContain('dropMe');
+  });
 });

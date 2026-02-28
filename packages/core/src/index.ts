@@ -5,3 +5,4 @@ export * from './types/index.js';
 export * from './accumulation/index.js';
 export * from './governance/index.js';
 export * from './runtime/index.js';
+export * from './safety/index.js';

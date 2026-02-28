@@ -99,3 +99,19 @@
 - Applied the deferred package strategy to both plans by introducing `@finalejs/query-helpers` as post-V1 work that starts after core surface area is stable.
 - Added explicit V1 forward-compatibility constraints now (stable canonical envelope, stable `_finale.*` metadata keys, sink preservation of canonical event structure) to reduce future migration risk when helpers launch.
 - Updated implementation planning to include platform-oriented query fixtures and roadmap gating so future helper APIs can be additive instead of forcing instrumentation rewrites.
+
+## 2026-02-28 13:41:30 PST
+
+- Completed Phase 5 (Safety Layer) in `@finalejs/core` with new `packages/core/src/safety/` modules: `pattern-scanner.ts`, `redaction-engine.ts`, `budget-enforcer.ts`, plus barrel export.
+- Implemented configurable pattern scanning defaults (bearer token, email, password-assignment) so fallback redaction can catch sensitive strings even without explicit field transforms.
+- Implemented transform-based redaction engine (`allow`, `hash`, `mask`, `bucket`, `drop`) with deterministic hashing and scanner fallback, returning explicit `redactedFields` and `droppedFields` reporting.
+- Implemented priority-aware budget enforcement using field metadata (`drop-first` -> `optional` -> `important`, preserve `must-keep`) and deterministic sub-event trimming when payload budget is exceeded.
+- Integrated safety pipeline into `AccumulationScope.flush()` in order: finalize accumulation -> redaction pass -> budget pass; now finalized event metadata and flush receipts include merged drop/redaction outputs and budget drop reason.
+- Exported safety API from `packages/core/src/index.ts` for downstream package consumption.
+- Added comprehensive Vitest coverage:
+  - `safety/pattern-scanner.test.ts`
+  - `safety/redaction-engine.test.ts`
+  - `safety/budget-enforcer.test.ts`
+  - updated `accumulation/scope.test.ts` with safety integration assertions.
+- Resolved `exactOptionalPropertyTypes` regressions in safety constructor/return shapes and calibrated sub-event trimming test budget to validate deterministic behavior.
+- Verified workspace checks pass: `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm build`.

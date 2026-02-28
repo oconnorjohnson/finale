@@ -3,6 +3,8 @@ import { EventStore, type EventStoreOptions } from './event-store.js';
 import { TimerManager } from './timer-manager.js';
 import { validateFields, type ValidationIssue, type ValidationMode } from '../governance/validation.js';
 import type { FieldRegistry } from '../types/index.js';
+import { BudgetEnforcer } from '../safety/budget-enforcer.js';
+import { RedactionEngine, type RedactionEngineOptions } from '../safety/redaction-engine.js';
 import type {
   EventAPI,
   FlushReceipt,
@@ -16,6 +18,7 @@ export type ScopeOptions = EventStoreOptions & {
   fieldRegistry?: FieldRegistry;
   validationMode?: ValidationMode;
   onValidationIssue?: (issue: ValidationIssue) => void;
+  safety?: Omit<RedactionEngineOptions, 'fieldRegistry'>;
 };
 
 export class AccumulationScope implements Scope {
@@ -27,6 +30,8 @@ export class AccumulationScope implements Scope {
   private readonly fieldRegistry: FieldRegistry | undefined;
   private readonly validationMode: ValidationMode;
   private readonly onValidationIssue: ((issue: ValidationIssue) => void) | undefined;
+  private readonly budgetEnforcer: BudgetEnforcer;
+  private readonly redactionEngine: RedactionEngine;
   private lastFinalizedEvent?: FinalizedEvent;
   private readonly validationDroppedFields = new Set<string>();
 
@@ -36,6 +41,14 @@ export class AccumulationScope implements Scope {
     this.fieldRegistry = options.fieldRegistry;
     this.validationMode = options.validationMode ?? 'soft';
     this.onValidationIssue = options.onValidationIssue;
+    this.redactionEngine = new RedactionEngine({
+      ...(this.fieldRegistry ? { fieldRegistry: this.fieldRegistry } : {}),
+      ...(options.safety?.scanner ? { scanner: options.safety.scanner } : {}),
+    });
+    this.budgetEnforcer = new BudgetEnforcer({
+      ...(this.fieldRegistry ? { fieldRegistry: this.fieldRegistry } : {}),
+      ...(options.limits ? { limits: options.limits } : {}),
+    });
 
     this.event = {
       add: (fields) => {
@@ -78,6 +91,32 @@ export class AccumulationScope implements Scope {
 
   private flush(): FlushReceipt {
     const finalizedEvent = this.eventStore.finalize(this.timerManager.snapshot());
+    const redactionResult = this.redactionEngine.apply(finalizedEvent.fields);
+    const budgetResult = this.budgetEnforcer.enforce(redactionResult.fields, finalizedEvent.subEvents);
+    const droppedFields = [
+      ...this.eventStore.getDroppedFields(),
+      ...this.validationDroppedFields,
+      ...redactionResult.droppedFields,
+      ...budgetResult.droppedFields,
+    ];
+    const redactedFields = redactionResult.redactedFields;
+
+    finalizedEvent.fields = budgetResult.fields;
+    if (budgetResult.subEvents && budgetResult.subEvents.length > 0) {
+      finalizedEvent.subEvents = budgetResult.subEvents;
+    } else {
+      delete finalizedEvent.subEvents;
+    }
+    if (droppedFields.length > 0) {
+      finalizedEvent.metadata.droppedFields = [...new Set(droppedFields)];
+    }
+    if (redactedFields.length > 0) {
+      finalizedEvent.metadata.redactedFields = [...new Set(redactedFields)];
+    }
+    if (budgetResult.dropReason) {
+      finalizedEvent.metadata.dropReason = budgetResult.dropReason;
+    }
+
     this.lastFinalizedEvent = finalizedEvent;
 
     return {
@@ -86,8 +125,8 @@ export class AccumulationScope implements Scope {
         decision: 'KEEP_NORMAL',
         reason: 'accumulated_not_emitted',
       },
-      fieldsDropped: [...this.eventStore.getDroppedFields(), ...this.validationDroppedFields],
-      fieldsRedacted: [],
+      fieldsDropped: finalizedEvent.metadata.droppedFields ?? [],
+      fieldsRedacted: finalizedEvent.metadata.redactedFields ?? [],
       finalSize: Buffer.byteLength(JSON.stringify(finalizedEvent)),
     };
   }
