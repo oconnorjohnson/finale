@@ -139,3 +139,18 @@
   - `sampling/verbosity-filter.test.ts`
   - updated `accumulation/scope.test.ts` with sampling decision/metadata and `KEEP_MINIMAL` filtering assertions.
 - Verified workspace checks pass after Phase 6 changes: `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm build`.
+
+## 2026-02-28 22:01:20 PST
+
+- Added a product-interaction/journey observability planning track so finale explicitly supports behavior-flow questions (for example settings entry, sub-step conversion, and drop-off) as part of rich logging.
+- Updated `plans/PRD/PLAN.md` with new **Appendix E. Interaction and Journey Observability Contract** covering:
+  - V1 scope for interaction observability
+  - recommended canonical interaction field families
+  - modeling guidance (embedded sub-events vs linked events via `journey.id`)
+  - safety/cardinality guardrails
+  - explicit queryability acceptance questions.
+- Updated `plans/IMPL/PLAN.md` to operationalize the contract by adding:
+  - Phase 10 Showcase C for interaction journey flow
+  - interaction/journey context in Phase 11 taxonomy
+  - interaction-focused E2E/manual verification scenarios and safety/cardinality fixture expectations.
+- Updated `plans/PRD/NOTES.md` Decision-to-Obligation appendix with a new obligation that interaction observability must use the same governance/safety/sampling model and canonical query fixtures.

@@ -1465,3 +1465,13 @@ Decision:
 Obligation:
 - regressions in redaction, field safety posture, or budget controls should be treated as release-blocking defects.
 - optional flexibility should never bypass safety by default.
+
+### 6) Product interaction observability should fit the same model
+
+Decision:
+- finale should support user interaction and journey questions (for example, settings-entry frequency and step drop-off) without adding a separate analytics pipeline.
+
+Obligation:
+- PRD and IMPL should include a first-class interaction/journey context family, canonical field guidance, and acceptance scenarios.
+- Interaction telemetry should use existing governance, safety, and sampling controls by default (no bypass path).
+- Examples should prove that interaction flows are queryable through canonical events and reusable query fixtures.

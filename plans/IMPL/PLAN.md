@@ -253,6 +253,10 @@ This phase validates that V1 solves both primary user outcomes equally:
 - Both examples use the same core primitives (`getScope()`, `event.add()`, `event.subEvent()`, `flush`)
 - Both examples have tests that assert the emitted event is sufficient for operational triage
 
+### 10.4 Showcase C: Product Interaction Journey Flow
+- Build a settings/navigation interaction example that captures step transitions and outcomes using canonical fields.
+- Prove that interaction questions (entry frequency, step conversion, drop-off) are answerable using the same event model and query fixtures.
+
 ---
 
 ## Phase 11: Context Taxonomy Implementation
@@ -266,6 +270,7 @@ Implement and document first-class context families in the registry, examples, a
 - LLM steps/tokens/cost
 - Error/retry chains
 - Runtime/deploy metadata
+- Product interaction/journey context (interaction identity, UI context, journey linkage, outcome)
 
 For each family, add:
 
@@ -273,6 +278,7 @@ For each family, add:
 - safety and cardinality expectations
 - example query and assertion fixtures
 - platform-oriented query fixtures that can be lifted directly into future `@finalejs/query-helpers` templates
+- safety/cardinality defaults for high-volume interaction dimensions
 
 ---
 
@@ -399,6 +405,7 @@ app.get('/', (req, res) => {
   - incident triage from one event
   - business-context diagnosis from one event
   - LLM step-level diagnosis from one event plus optional milestones
+  - product-interaction questions (settings entry frequency, sub-step conversion, drop-off by cohort/tenant/release)
 
 ### Manual Testing
 1. Run demo Express app
@@ -407,6 +414,7 @@ app.get('/', (req, res) => {
 4. Check sampling decisions match policy
 5. Run LLM workflow example and verify token/cost/tool fields
 6. Verify optional milestone emission can be enabled without altering default API flow
+7. Run interaction journey example and verify step progression/drop-off can be queried with canonical fields
 
 ---
 

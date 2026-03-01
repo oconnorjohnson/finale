@@ -1343,3 +1343,49 @@ To support OSS adoption, finale should publish explicit runtime and release poli
 - Publish security disclosure path and response workflow.
 - Include dependency scanning/audit in release gates.
 - Treat regressions in safety defaults (PII/secret handling) as release-blocking defects.
+
+---
+
+## Appendix E. Interaction and Journey Observability Contract
+
+finale should support product-interaction and user-journey observability as a first-class rich-logging outcome without becoming a separate analytics product.
+
+### Scope of Support in V1
+
+V1 should support interaction tracking patterns such as:
+
+- opening a settings surface
+- selecting a sub-setting
+- step-to-step drop-off across an in-app flow
+
+This support should use the same canonical wide-event model and governance pipeline, not a parallel telemetry model.
+
+### Recommended Interaction Field Families
+
+To keep interaction logs queryable and portable across backends, plans and examples should include a baseline interaction taxonomy:
+
+1. **Interaction identity**: `interaction.name`, `interaction.category`, `interaction.target`.
+2. **UI context**: `screen.name`, `screen.section`, `ui.component`.
+3. **Journey linkage**: `journey.id`, `journey.step`, `journey.parent_step`.
+4. **Session and actor context**: `session.id`, `user.id`, `org.id`, tenant/cohort fields.
+5. **Outcome context**: `interaction.outcome`, `interaction.error`, `interaction.duration_ms`.
+
+### Modeling Guidance
+
+- Use **embedded `subEvents`** for bounded, request-aligned interaction steps where one event can explain the flow.
+- Use **linked primary events via `journey.id`** for long-running or cross-request journeys.
+- Keep the canonical primary-event shape stable so future helper packages can wrap, not replace, instrumentation.
+
+### Safety and Cardinality Guardrails
+
+- Treat free-form UI labels, raw search terms, and raw URL query strings as high-risk fields; default to normalization, masking, bucketing, or dropping.
+- Require explicit cardinality guidance for interaction fields likely to explode dimensions (`interaction.target`, free-text labels).
+- Interaction observability should inherit the same redaction and budget constraints as all other context families.
+
+### Queryability Acceptance Questions
+
+V1 interaction support should be considered complete only if operators can answer:
+
+- How often was `settings.opened` triggered?
+- Of those sessions, how often was `settings.subsetting_x.clicked` triggered?
+- What are journey step conversion and drop-off rates by feature flag cohort, release, or tenant?
