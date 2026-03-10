@@ -154,3 +154,9 @@
   - interaction/journey context in Phase 11 taxonomy
   - interaction-focused E2E/manual verification scenarios and safety/cardinality fixture expectations.
 - Updated `plans/PRD/NOTES.md` Decision-to-Obligation appendix with a new obligation that interaction observability must use the same governance/safety/sampling model and canonical query fixtures.
+
+## 2026-03-08 23:14:08 PDT
+
+- Completed the `P7.S1` sink-runtime design sprint in `llm/v1phases/v1phase7.md` with a decision-complete implementation plan for queue ownership, emission lifecycle, drop policy semantics, drain behavior, and cross-agent handoffs.
+- Locked the core runtime posture for Phase 7: `flush()` means finalize + queue admission, `FlushReceipt.emitted` means accepted by the sink runtime, sink failures are fail-open with no core retry, and runtime ownership is per-`Finale` rather than per-scope.
+- Clarified contract comments in `packages/core/src/types/index.ts` so queue-admission receipts, queue drop policy defaults, and drain semantics are explicit before `P7.S2`, `P7.S3`, and `P7.S4` implementation begins.

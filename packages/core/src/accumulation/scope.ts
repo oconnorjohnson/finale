@@ -7,6 +7,7 @@ import { BudgetEnforcer } from '../safety/budget-enforcer.js';
 import { RedactionEngine, type RedactionEngineOptions } from '../safety/redaction-engine.js';
 import { applyVerbosityFilter } from '../sampling/verbosity-filter.js';
 import { decideSampling, type PolicyEngineOptions } from '../sampling/policy-engine.js';
+import { getAttachedSinkRuntime } from '../sink/attachment.js';
 import type {
   EventAPI,
   FlushReceipt,
@@ -20,6 +21,7 @@ export type ScopeOptions = EventStoreOptions & {
   fieldRegistry?: FieldRegistry;
   validationMode?: ValidationMode;
   onValidationIssue?: (issue: ValidationIssue) => void;
+  onFlushReceipt?: (receipt: FlushReceipt) => void;
   safety?: Omit<RedactionEngineOptions, 'fieldRegistry'>;
   sampling?: PolicyEngineOptions;
 };
@@ -33,6 +35,7 @@ export class AccumulationScope implements Scope {
   private readonly fieldRegistry: FieldRegistry | undefined;
   private readonly validationMode: ValidationMode;
   private readonly onValidationIssue: ((issue: ValidationIssue) => void) | undefined;
+  private readonly onFlushReceipt: ((receipt: FlushReceipt) => void) | undefined;
   private readonly budgetEnforcer: BudgetEnforcer;
   private readonly redactionEngine: RedactionEngine;
   private readonly sampling: PolicyEngineOptions | undefined;
@@ -45,6 +48,7 @@ export class AccumulationScope implements Scope {
     this.fieldRegistry = options.fieldRegistry;
     this.validationMode = options.validationMode ?? 'soft';
     this.onValidationIssue = options.onValidationIssue;
+    this.onFlushReceipt = options.onFlushReceipt;
     this.redactionEngine = new RedactionEngine({
       ...(this.fieldRegistry ? { fieldRegistry: this.fieldRegistry } : {}),
       ...(options.safety?.scanner ? { scanner: options.safety.scanner } : {}),
@@ -134,13 +138,23 @@ export class AccumulationScope implements Scope {
 
     this.lastFinalizedEvent = filteredEvent;
 
-    return {
-      emitted: false,
+    const attachedSinkRuntime = getAttachedSinkRuntime(this);
+    const emitted =
+      samplingDecision.decision !== 'DROP' && attachedSinkRuntime
+        ? attachedSinkRuntime.enqueue(filteredEvent)
+        : false;
+
+    const receipt = {
+      emitted,
       decision: samplingDecision,
       fieldsDropped: filteredEvent.metadata.droppedFields ?? [],
       fieldsRedacted: filteredEvent.metadata.redactedFields ?? [],
       finalSize: Buffer.byteLength(JSON.stringify(filteredEvent)),
     };
+
+    this.onFlushReceipt?.(receipt);
+
+    return receipt;
   }
 
   private validateIncomingFields(fields: Record<string, unknown>): Record<string, unknown> {

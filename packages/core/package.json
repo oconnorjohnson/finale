@@ -21,6 +21,9 @@
   "files": [
     "dist"
   ],
+  "dependencies": {
+    "@types/express": "^5.0.1"
+  },
   "scripts": {
     "build": "tsup",
     "dev": "tsup --watch",
@@ -43,14 +46,19 @@
   "license": "MIT",
   "devDependencies": {
     "@types/node": "^20.11.0",
+    "express": "^5.1.0",
     "tsup": "^8.0.0",
     "typescript": "^5.3.0",
     "vitest": "^2.0.0"
   },
   "peerDependencies": {
+    "express": "^4.21.0 || ^5.0.0",
     "typescript": ">=5.0.0"
   },
   "peerDependenciesMeta": {
+    "express": {
+      "optional": true
+    },
     "typescript": {
       "optional": true
     }

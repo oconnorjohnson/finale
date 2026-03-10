@@ -19,16 +19,20 @@ export function hasScope(): boolean {
   return Boolean(scopeStack && scopeStack.length > 0);
 }
 
+export function runWithScope<T>(scope: Scope, fn: () => T): T {
+  const currentStack = scopeStorage.getStore() ?? [];
+  const nextStack = [...currentStack, scope];
+  return scopeStorage.run(nextStack, fn);
+}
+
 export async function withScope<T>(
   finale: Finale,
   fn: (scope: Scope) => T | Promise<T>,
   options: StartScopeOptions = {}
 ): Promise<T> {
   const runtimeScope = startScope(finale, options);
-  const currentStack = scopeStorage.getStore() ?? [];
-  const nextStack = [...currentStack, runtimeScope.scope];
 
-  return scopeStorage.run(nextStack, async () => {
+  return runWithScope(runtimeScope.scope, async () => {
     try {
       return await fn(runtimeScope.scope);
     } finally {

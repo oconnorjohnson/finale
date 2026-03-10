@@ -1,5 +1,7 @@
 import { AccumulationScope } from '../accumulation/scope.js';
+import { attachSinkRuntime } from '../sink/attachment.js';
 import type { Finale, FlushReceipt, Scope } from '../types/index.js';
+import { getFinaleScopeOptions, getFinaleSinkRuntime } from './finale-internals.js';
 
 export interface RuntimeScopeContext {
   scope: Scope;
@@ -25,9 +27,18 @@ function createLifecycleFallbackReceipt(reason: string): FlushReceipt {
   };
 }
 
-export function startScope(_finale: Finale, options: StartScopeOptions = {}): RuntimeScopeContext {
+export function startScope(finale: Finale, options: StartScopeOptions = {}): RuntimeScopeContext {
+  const scope = options.scope ?? new AccumulationScope(getFinaleScopeOptions(finale));
+
+  if (!options.scope) {
+    const runtime = getFinaleSinkRuntime(finale);
+    if (runtime) {
+      attachSinkRuntime(scope, runtime);
+    }
+  }
+
   return {
-    scope: options.scope ?? new AccumulationScope(),
+    scope,
     startedAt: Date.now(),
     finalized: false,
   };

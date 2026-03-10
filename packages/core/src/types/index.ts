@@ -158,9 +158,9 @@ export interface SamplingPolicy {
  * Sink interface - adapters implement this to output events.
  */
 export interface Sink {
-  /** Emit a finalized event record */
+  /** Emit a finalized event record from the async sink runtime worker */
   emit(record: FinalizedEvent): void | Promise<void>;
-  /** Optional: called on graceful shutdown to flush pending events */
+  /** Optional: called during graceful shutdown after queued records are processed */
   drain?(): Promise<void>;
 }
 
@@ -172,7 +172,7 @@ export interface Sink {
  * Receipt returned from flush() for debugging/testing.
  */
 export interface FlushReceipt {
-  /** Whether the event was emitted to the sink */
+  /** Whether the event was accepted by the sink runtime for emission */
   emitted: boolean;
   /** The sampling decision that was made */
   decision: SamplingDecision;
@@ -267,7 +267,7 @@ export type FieldRegistry = Record<string, FieldDefinition>;
 export interface QueueConfig {
   /** Maximum queue size (default: 1000) */
   maxSize?: number;
-  /** Drop policy when queue is full */
+  /** Drop policy when queue is full (default: drop-lowest-tier) */
   dropPolicy?: 'drop-newest' | 'drop-oldest' | 'drop-lowest-tier';
 }
 
@@ -379,7 +379,7 @@ export interface Metrics {
  * Drain options for graceful shutdown.
  */
 export interface DrainOptions {
-  /** Timeout in milliseconds */
+  /** Timeout in milliseconds before drain rejects and remaining queued events are abandoned */
   timeoutMs?: number;
 }
 
@@ -389,6 +389,6 @@ export interface DrainOptions {
 export interface Finale {
   /** Metrics for observability */
   readonly metrics: Metrics;
-  /** Graceful shutdown - flush queued events */
+  /** Graceful shutdown - stop new admissions and wait for queued events to finish */
   drain(options?: DrainOptions): Promise<void>;
 }

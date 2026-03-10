@@ -1,7 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
+import { createSinkRuntime } from '../sink/runtime.js';
+import type { FinalizedEvent, Sink } from '../types/index.js';
 import type { Finale, FlushReceipt, Scope } from '../types/index.js';
+import { registerFinaleSinkRuntime, unregisterFinaleSinkRuntime } from './finale-internals.js';
 import { getNoopScope } from './noop-scope.js';
-import { getScope, hasScope, withScope } from './scope-manager.js';
+import { getScope, hasScope, runWithScope, withScope } from './scope-manager.js';
 
 function createFinaleStub(): Finale {
   const snapshot = {
@@ -60,6 +63,23 @@ function createTrackedScope(flushImpl?: () => FlushReceipt): { scope: Scope; flu
   };
 }
 
+function createRecordingRuntime(): {
+  emitted: FinalizedEvent[];
+  runtime: ReturnType<typeof createSinkRuntime>;
+} {
+  const emitted: FinalizedEvent[] = [];
+  const sink: Sink = {
+    emit: vi.fn(async (record: FinalizedEvent) => {
+      emitted.push(record);
+    }),
+  };
+
+  return {
+    emitted,
+    runtime: createSinkRuntime({ sink }),
+  };
+}
+
 describe('scope manager', () => {
   it('falls back to no-op scope outside active context', () => {
     expect(hasScope()).toBe(false);
@@ -78,6 +98,25 @@ describe('scope manager', () => {
     expect(getScope()).toBe(getNoopScope());
   });
 
+  it('emits through the registered sink runtime when withScope finalizes', async () => {
+    const finale = createFinaleStub();
+    const { emitted, runtime } = createRecordingRuntime();
+    registerFinaleSinkRuntime(finale, runtime);
+
+    try {
+      await withScope(finale, async (scope) => {
+        scope.event.add({ 'request.id': 'req_1' });
+      });
+
+      await runtime.drain();
+
+      expect(emitted).toHaveLength(1);
+      expect(emitted[0]?.fields['request.id']).toBe('req_1');
+    } finally {
+      unregisterFinaleSinkRuntime(finale);
+    }
+  });
+
   it('uses nested stack semantics with innermost scope on top', async () => {
     const finale = createFinaleStub();
     let outerScope: Scope | undefined;
@@ -93,6 +132,50 @@ describe('scope manager', () => {
 
     expect(outerScope).toBeDefined();
     expect(hasScope()).toBe(false);
+  });
+
+  it('emits nested withScope finalizations through the registered runtime', async () => {
+    const finale = createFinaleStub();
+    const { emitted, runtime } = createRecordingRuntime();
+    registerFinaleSinkRuntime(finale, runtime);
+
+    try {
+      await withScope(finale, async (outer) => {
+        outer.event.add({ 'request.id': 'outer' });
+
+        await withScope(finale, async (inner) => {
+          inner.event.add({ 'request.id': 'inner' });
+        });
+      });
+
+      await runtime.drain();
+
+      expect(emitted.map((record) => record.fields['request.id'])).toEqual(['inner', 'outer']);
+    } finally {
+      unregisterFinaleSinkRuntime(finale);
+    }
+  });
+
+  it('runWithScope activates provided scope without flushing it', async () => {
+    const outer = createTrackedScope();
+    const inner = createTrackedScope();
+
+    await runWithScope(outer.scope, async () => {
+      expect(hasScope()).toBe(true);
+      expect(getScope()).toBe(outer.scope);
+
+      await runWithScope(inner.scope, async () => {
+        expect(hasScope()).toBe(true);
+        expect(getScope()).toBe(inner.scope);
+      });
+
+      expect(getScope()).toBe(outer.scope);
+    });
+
+    expect(outer.flush).not.toHaveBeenCalled();
+    expect(inner.flush).not.toHaveBeenCalled();
+    expect(hasScope()).toBe(false);
+    expect(getScope()).toBe(getNoopScope());
   });
 
   it('finalizes scope even when callback throws', async () => {
