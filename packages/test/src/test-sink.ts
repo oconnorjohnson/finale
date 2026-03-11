@@ -1,6 +1,3 @@
-// Test sink for capturing events in memory
-// TODO: Implement in Phase 10
-
 import type { Sink, FinalizedEvent, FlushReceipt } from '@finalejs/core';
 
 export interface TestSink extends Sink {
@@ -10,6 +7,10 @@ export interface TestSink extends Sink {
   allEvents(): FinalizedEvent[];
   /** Get the most recent flush receipt (if tracked) */
   lastReceipt(): FlushReceipt | undefined;
+  /** Get all captured receipts */
+  allReceipts(): FlushReceipt[];
+  /** Capture a receipt returned from flush() and return it unchanged */
+  captureReceipt<T extends FlushReceipt>(receipt: T): T;
   /** Clear all captured events */
   clear(): void;
 }
@@ -19,7 +20,7 @@ export interface TestSink extends Sink {
  */
 export function createTestSink(): TestSink {
   const events: FinalizedEvent[] = [];
-  let _lastReceipt: FlushReceipt | undefined;
+  const receipts: FlushReceipt[] = [];
 
   return {
     emit(record: FinalizedEvent): void {
@@ -35,16 +36,25 @@ export function createTestSink(): TestSink {
     },
 
     lastReceipt(): FlushReceipt | undefined {
-      return _lastReceipt;
+      return receipts[receipts.length - 1];
+    },
+
+    allReceipts(): FlushReceipt[] {
+      return [...receipts];
+    },
+
+    captureReceipt<T extends FlushReceipt>(receipt: T): T {
+      receipts.push(receipt);
+      return receipt;
     },
 
     clear(): void {
       events.length = 0;
-      _lastReceipt = undefined;
+      receipts.length = 0;
     },
 
     async drain(): Promise<void> {
-      // No-op for test sink
+      return undefined;
     },
   };
 }

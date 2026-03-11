@@ -1,25 +1,49 @@
-// Zod schema adapter implementation
-// TODO: Implement in Phase 9
-
 import type { SchemaType, SafeParseResult, SchemaAdapter } from '@finalejs/core';
 
-/**
- * Create a SchemaType from a Zod schema.
- */
-export function zodType<T>(_zodSchema: unknown): SchemaType<T> {
-  // Placeholder implementation
+type ZodSchemaLike<T> = {
+  parse(value: unknown): T;
+  safeParse(value: unknown):
+    | { success: true; data: T }
+    | { success: false; error: unknown };
+  isOptional(): boolean;
+};
+
+function assertZodSchema(schema: unknown): asserts schema is ZodSchemaLike<unknown> {
+  if (
+    !schema ||
+    typeof schema !== 'object' ||
+    typeof (schema as { parse?: unknown }).parse !== 'function' ||
+    typeof (schema as { safeParse?: unknown }).safeParse !== 'function' ||
+    typeof (schema as { isOptional?: unknown }).isOptional !== 'function'
+  ) {
+    throw new TypeError('Expected a Zod schema');
+  }
+}
+
+function normalizeError(error: unknown): Error {
+  return error instanceof Error ? error : new Error(String(error));
+}
+
+export function zodType<T>(zodSchema: unknown): SchemaType<T> {
+  assertZodSchema(zodSchema);
+
   return {
     parse(value: unknown): T {
-      // Will use zodSchema.parse(value)
-      return value as T;
+      return zodSchema.parse(value) as T;
     },
     safeParse(value: unknown): SafeParseResult<T> {
-      // Will use zodSchema.safeParse(value)
-      return { success: true, data: value as T };
+      const result = zodSchema.safeParse(value);
+      if (result.success) {
+        return { success: true, data: result.data as T };
+      }
+
+      return {
+        success: false,
+        error: normalizeError(result.error),
+      };
     },
     isOptional(): boolean {
-      // Will check if zodSchema is optional
-      return false;
+      return zodSchema.isOptional();
     },
   };
 }

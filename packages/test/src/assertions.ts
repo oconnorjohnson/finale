@@ -1,6 +1,3 @@
-// Test assertions for finale events
-// TODO: Implement in Phase 10
-
 import type { FinalizedEvent, FlushReceipt, SamplingTier } from '@finalejs/core';
 
 /**
@@ -12,7 +9,7 @@ export function assertFields(
   expected: Record<string, unknown>
 ): void {
   if (!event) {
-    throw new Error('assertFields: event is undefined');
+    throw new Error('assertFields: expected an event but received undefined');
   }
 
   for (const [key, value] of Object.entries(expected)) {
@@ -33,7 +30,7 @@ export function assertFields(
  */
 export function assertNoField(event: FinalizedEvent | undefined, fieldName: string): void {
   if (!event) {
-    throw new Error('assertNoField: event is undefined');
+    throw new Error('assertNoField: expected an event but received undefined');
   }
 
   if (fieldName in event.fields) {
@@ -50,7 +47,7 @@ export function assertSamplingDecision(
   expected: SamplingTier
 ): void {
   if (!receipt) {
-    throw new Error('assertSamplingDecision: receipt is undefined');
+    throw new Error('assertSamplingDecision: expected a receipt but received undefined');
   }
 
   if (receipt.decision.decision !== expected) {
