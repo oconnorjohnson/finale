@@ -1,22 +1,25 @@
 import type { Sink, FinalizedEvent, FlushReceipt } from '@finalejs/core';
 
 export interface TestSink extends Sink {
-  /** Get the most recently emitted event */
+  /** Get the most recently emitted event captured by this sink. */
   lastEvent(): FinalizedEvent | undefined;
-  /** Get all emitted events */
+  /** Get all emitted events in insertion order. */
   allEvents(): FinalizedEvent[];
-  /** Get the most recent flush receipt (if tracked) */
+  /** Get the most recent manually captured flush receipt. */
   lastReceipt(): FlushReceipt | undefined;
-  /** Get all captured receipts */
+  /** Get all manually captured flush receipts in insertion order. */
   allReceipts(): FlushReceipt[];
-  /** Capture a receipt returned from flush() and return it unchanged */
+  /** Store a receipt returned from flush() and return the same instance unchanged. */
   captureReceipt<T extends FlushReceipt>(receipt: T): T;
-  /** Clear all captured events */
+  /** Clear all captured events and receipts so the sink can be reused. */
   clear(): void;
 }
 
 /**
- * Create an in-memory sink for testing.
+ * Create an in-memory sink for testing event emission through the public API.
+ *
+ * Receipt tracking is explicit: callers must pass a receipt returned from
+ * `flush()` into `captureReceipt()` when they want receipt assertions.
  */
 export function createTestSink(): TestSink {
   const events: FinalizedEvent[] = [];

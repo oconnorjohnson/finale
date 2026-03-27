@@ -1,8 +1,8 @@
 import type { FinalizedEvent, FlushReceipt, SamplingTier } from '@finalejs/core';
 
 /**
- * Assert that an event contains the expected fields.
- * @throws If any field is missing or has wrong value
+ * Assert that an event contains the expected field subset.
+ * @throws If the event is missing, a field is absent, or a value differs.
  */
 export function assertFields(
   event: FinalizedEvent | undefined,
@@ -25,8 +25,8 @@ export function assertFields(
 }
 
 /**
- * Assert that an event does not contain a specific field (useful for PII checks).
- * @throws If the field is present
+ * Assert that an event does not contain a specific field in `event.fields`.
+ * @throws If the event is missing or the field is present.
  */
 export function assertNoField(event: FinalizedEvent | undefined, fieldName: string): void {
   if (!event) {
@@ -39,8 +39,8 @@ export function assertNoField(event: FinalizedEvent | undefined, fieldName: stri
 }
 
 /**
- * Assert the sampling decision in a flush receipt.
- * @throws If the decision doesn't match
+ * Assert the sampling tier stored on a previously captured flush receipt.
+ * @throws If the receipt is missing or the tier does not match.
  */
 export function assertSamplingDecision(
   receipt: FlushReceipt | undefined,

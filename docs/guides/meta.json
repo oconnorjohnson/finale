@@ -1,0 +1,13 @@
+{
+  "title": "Workflow Guides",
+  "pages": [
+    "backend-request-flow",
+    "interaction-journeys",
+    "llm-workflows",
+    "testing-instrumentation",
+    "convex-functions",
+    "convex-http-actions",
+    "queryability",
+    "release-acceptance"
+  ]
+}

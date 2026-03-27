@@ -2,7 +2,7 @@ import { captureErrorFields } from './error-capture.js';
 import { EventStore, type EventStoreOptions } from './event-store.js';
 import { TimerManager } from './timer-manager.js';
 import { validateFields, type ValidationIssue, type ValidationMode } from '../governance/validation.js';
-import type { FieldRegistry } from '../types/index.js';
+import type { ErrorCaptureConfig, FieldRegistry } from '../types/index.js';
 import { BudgetEnforcer } from '../safety/budget-enforcer.js';
 import { RedactionEngine, type RedactionEngineOptions } from '../safety/redaction-engine.js';
 import { applyVerbosityFilter } from '../sampling/verbosity-filter.js';
@@ -19,6 +19,7 @@ import type {
 
 export type ScopeOptions = EventStoreOptions & {
   fieldRegistry?: FieldRegistry;
+  errorCapture?: ErrorCaptureConfig;
   validationMode?: ValidationMode;
   onValidationIssue?: (issue: ValidationIssue) => void;
   onFlushReceipt?: (receipt: FlushReceipt) => void;
@@ -33,6 +34,7 @@ export class AccumulationScope implements Scope {
   private readonly eventStore: EventStore;
   private readonly timerManager: TimerManager;
   private readonly fieldRegistry: FieldRegistry | undefined;
+  private readonly errorCapture: ErrorCaptureConfig | undefined;
   private readonly validationMode: ValidationMode;
   private readonly onValidationIssue: ((issue: ValidationIssue) => void) | undefined;
   private readonly onFlushReceipt: ((receipt: FlushReceipt) => void) | undefined;
@@ -46,6 +48,7 @@ export class AccumulationScope implements Scope {
     this.eventStore = new EventStore(options);
     this.timerManager = new TimerManager();
     this.fieldRegistry = options.fieldRegistry;
+    this.errorCapture = options.errorCapture;
     this.validationMode = options.validationMode ?? 'soft';
     this.onValidationIssue = options.onValidationIssue;
     this.onFlushReceipt = options.onFlushReceipt;
@@ -65,7 +68,7 @@ export class AccumulationScope implements Scope {
       },
       child: (namespace) => this.createNamespacedApi(namespace),
       error: (err, options) => {
-        this.eventStore.add(captureErrorFields(err, options));
+        this.eventStore.add(captureErrorFields(err, { ...this.errorCapture, ...options }));
       },
       annotate: (tag) => {
         this.eventStore.add({ annotations: [tag] });

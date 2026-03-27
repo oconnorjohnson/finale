@@ -63,6 +63,7 @@ describe('package root exports', () => {
     expect(typeof core.getScope).toBe('function');
     expect(typeof core.hasScope).toBe('function');
     expect(typeof core.withScope).toBe('function');
+    expect(typeof core.expressMiddleware).toBe('function');
 
     await core.withScope(finale, async (scope) => {
       expect(core.hasScope()).toBe(true);
@@ -74,6 +75,7 @@ describe('package root exports', () => {
 
     expect(emitted).toHaveLength(1);
     expect(emitted[0]?.fields['request.id']).toBe('req_root');
+    expect(typeof core.expressMiddleware(finale)).toBe('function');
   });
 
   it('falls back to the no-op scope outside active context', () => {
@@ -86,5 +88,9 @@ describe('package root exports', () => {
     expect('startScope' in core).toBe(false);
     expect('endScope' in core).toBe(false);
     expect('getNoopScope' in core).toBe(false);
+  });
+
+  it('does not expose the portable export path from the package root', () => {
+    expect('portable' in core).toBe(false);
   });
 });

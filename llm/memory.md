@@ -160,3 +160,23 @@
 - Completed the `P7.S1` sink-runtime design sprint in `llm/v1phases/v1phase7.md` with a decision-complete implementation plan for queue ownership, emission lifecycle, drop policy semantics, drain behavior, and cross-agent handoffs.
 - Locked the core runtime posture for Phase 7: `flush()` means finalize + queue admission, `FlushReceipt.emitted` means accepted by the sink runtime, sink failures are fail-open with no core retry, and runtime ownership is per-`Finale` rather than per-scope.
 - Clarified contract comments in `packages/core/src/types/index.ts` so queue-admission receipts, queue drop policy defaults, and drain semantics are explicit before `P7.S2`, `P7.S3`, and `P7.S4` implementation begins.
+
+## 2026-03-22 20:05:00 PDT
+
+- Completed Phase 8 (Public API) in `@finalejs/core` by closing the remaining public-surface gap rather than changing the underlying engine/runtime behavior.
+- Exported `expressMiddleware` plus `ExpressMiddlewareOptions` and `ExpressTraceContext` from `packages/core/src/index.ts` so the supported import form matches the PRD examples: `import { createFinale, expressMiddleware, getScope, defineFields } from '@finalejs/core'`.
+- Added executable API examples in `packages/core/src/api/public-api-examples.test.ts` covering both the direct engine flow (`defineFields` + `createFinale` + `withScope` + `drain`) and an Express request lifecycle using only root imports.
+- Extended root package verification in `packages/core/src/index.test.ts` so the package surface proves `expressMiddleware` is available while internal runtime helpers remain hidden.
+- Updated `llm/v1phases/v1phase8.md` to mark the phase complete and document the implemented engine factory, metrics, scope access, middleware, and example coverage.
+- Fixed the workspace lint blocker in `packages/sink-console/src/sink.test.ts` by replacing the control-character regex literal with an equivalent dynamically constructed pattern so Phase 8 can close with passing repo checks.
+
+## 2026-03-22 23:53:22 PDT
+
+- Completed `P9.S5` and closed Phase 9 (Adapter Packages) by adding cross-package consumer verification in `packages/test/src/cross-package.integration.test.ts`.
+- Updated `packages/test/package.json` so the `@finalejs/test` package consumes `@finalejs/schema-zod`, `@finalejs/sink-console`, and `@finalejs/sink-pino` as workspace dev dependencies, plus `zod` for real schema fixtures.
+- Verified cross-package flows against the real current runtime path:
+  - `zodAdapter.createType(...)` for registry-backed schema definitions
+  - `zodType(...)` for Zod-backed `SchemaType` coercion and optional handling
+  - `createTestSink`, `consoleSink`, and `pinoSink` through `createFinale()` + `withScope()` public API usage
+- Kept sprint scope verification-only: `createFinale({ schemaAdapter })` runtime wiring remains intentionally unchanged and out of scope for Phase 9 close-out.
+- Verified final workspace gates pass with the new suite enabled: `pnpm lint`, `pnpm typecheck`, `pnpm build`, and `pnpm test`.

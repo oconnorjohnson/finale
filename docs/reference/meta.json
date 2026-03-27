@@ -1,0 +1,10 @@
+{
+  "title": "Reference",
+  "pages": [
+    "core-api",
+    "field-definition-reference",
+    "sampling-tiers",
+    "sink-behavior",
+    "config-gotchas"
+  ]
+}

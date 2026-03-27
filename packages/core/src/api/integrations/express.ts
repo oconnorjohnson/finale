@@ -130,7 +130,6 @@ export function expressMiddleware(
 
     const detachListeners = (): void => {
       req.off('aborted', handleAborted);
-      req.off('close', handleClose);
       req.off('error', handleRequestError);
       res.off('finish', handleFinish);
       res.off('close', handleClose);
@@ -194,7 +193,6 @@ export function expressMiddleware(
     };
 
     req.once('aborted', handleAborted);
-    req.once('close', handleClose);
     req.once('error', handleRequestError);
     res.once('finish', handleFinish);
     res.once('close', handleClose);

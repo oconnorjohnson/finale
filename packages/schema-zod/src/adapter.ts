@@ -1,9 +1,10 @@
-import type { SchemaType, SafeParseResult, SchemaAdapter } from '@finalejs/core';
+import type { SchemaAdapter, SafeParseResult, SchemaType } from '@finalejs/core';
+import type { ZodTypeAny, output as ZodOutput } from 'zod';
 
-type ZodSchemaLike<T> = {
-  parse(value: unknown): T;
+type ZodSchemaLike<TOutput = unknown> = {
+  parse(value: unknown): TOutput;
   safeParse(value: unknown):
-    | { success: true; data: T }
+    | { success: true; data: TOutput }
     | { success: false; error: unknown };
   isOptional(): boolean;
 };
@@ -24,17 +25,15 @@ function normalizeError(error: unknown): Error {
   return error instanceof Error ? error : new Error(String(error));
 }
 
-export function zodType<T>(zodSchema: unknown): SchemaType<T> {
-  assertZodSchema(zodSchema);
-
+function toSchemaType<TOutput>(zodSchema: ZodSchemaLike<TOutput>): SchemaType<TOutput> {
   return {
-    parse(value: unknown): T {
-      return zodSchema.parse(value) as T;
+    parse(value: unknown): TOutput {
+      return zodSchema.parse(value);
     },
-    safeParse(value: unknown): SafeParseResult<T> {
+    safeParse(value: unknown): SafeParseResult<TOutput> {
       const result = zodSchema.safeParse(value);
       if (result.success) {
-        return { success: true, data: result.data as T };
+        return { success: true, data: result.data };
       }
 
       return {
@@ -48,11 +47,22 @@ export function zodType<T>(zodSchema: unknown): SchemaType<T> {
   };
 }
 
+export function zodType<TSchema extends ZodTypeAny>(
+  zodSchema: TSchema
+): SchemaType<ZodOutput<TSchema>>;
+export function zodType(zodSchema: unknown): SchemaType<unknown>;
+export function zodType(zodSchema: unknown): SchemaType<unknown> {
+  assertZodSchema(zodSchema);
+
+  return toSchemaType(zodSchema);
+}
+
 /**
  * Zod schema adapter for @finalejs/core.
  */
 export const zodAdapter: SchemaAdapter = {
   createType<T>(schema: unknown): SchemaType<T> {
-    return zodType<T>(schema);
+    assertZodSchema(schema);
+    return toSchemaType(schema) as SchemaType<T>;
   },
 };

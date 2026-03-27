@@ -341,4 +341,32 @@ describe('express middleware', () => {
     expect(errorTracked.errorCalls).toEqual([transportError]);
     expect(errorTracked.flush).toHaveBeenCalledTimes(1);
   });
+
+  it('does not finalize on request close before the response completes', async () => {
+    const tracked = createTrackedScope();
+    const req = new MockRequest();
+    const res = new MockResponse(202);
+
+    await invokeMiddleware({
+      tracked,
+      req,
+      res,
+      middlewareOptions: {
+        onResponse(scope, _request, response) {
+          scope.event.add({ 'http.status_code': response.statusCode });
+        },
+      },
+      handler: () => {
+        req.emit('close');
+        expect(tracked.flush).toHaveBeenCalledTimes(0);
+        res.emit('finish');
+      },
+    });
+
+    expect(tracked.flush).toHaveBeenCalledTimes(1);
+    expect(tracked.addCalls).toEqual([
+      expect.objectContaining({ 'http.duration_ms': expect.any(Number) }),
+      { 'http.status_code': 202 },
+    ]);
+  });
 });

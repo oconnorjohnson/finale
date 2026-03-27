@@ -207,8 +207,29 @@ export interface TimerAPI {
 /**
  * Options for error capture.
  */
-export interface ErrorCaptureOptions {
-  /** Include stack trace (default: false in production) */
+export type ErrorCaptureProjection = 'canonical' | 'canonical-plus' | 'mirror';
+
+/**
+ * Engine-level defaults for error capture.
+ */
+export interface ErrorCaptureConfig {
+  /** Error field projection strategy */
+  projection?: ErrorCaptureProjection;
+  /** Include stack trace when available */
+  includeStack?: boolean;
+  /** Attempt to unwrap known boundary-safe error envelopes */
+  unwrapBoundaryErrors?: boolean;
+  /** Maximum depth for traversing cause chains */
+  maxCauseDepth?: number;
+  /** Field name used for mirrored payload projection */
+  payloadField?: string;
+}
+
+/**
+ * Per-call options for error capture.
+ */
+export interface ErrorCaptureOptions extends Partial<ErrorCaptureConfig> {
+  /** Include stack trace when available */
   includeStack?: boolean;
 }
 
@@ -323,6 +344,8 @@ export interface FinaleConfig {
   debug?: DebugConfig;
   /** Limits configuration */
   limits?: LimitsConfig;
+  /** Error capture defaults */
+  errors?: ErrorCaptureConfig;
 }
 
 // =============================================================================

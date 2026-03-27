@@ -70,6 +70,7 @@ describe('@finalejs/test integration', () => {
 
     await finale.drain();
 
+    expect(sink.allReceipts()).toHaveLength(1);
     assertFields(sink.lastEvent(), {
       'request.id': 'req_1',
       'http.status_code': '200',
@@ -101,6 +102,27 @@ describe('@finalejs/test integration', () => {
 
     expect(sink.allEvents()).toEqual([]);
     assertSamplingDecision(sink.lastReceipt(), 'DROP');
+  });
+
+  it('does not auto-capture receipts from implicit withScope finalization', async () => {
+    const sink = createTestSink();
+    const finale = createFinale({
+      fields: defineFields({
+        'request.id': makeField(),
+      }),
+      sink,
+    });
+
+    await withScope(finale, async (scope) => {
+      scope.event.add({ 'request.id': 'req_auto_flush' });
+    });
+
+    await finale.drain();
+
+    expect(sink.allEvents()).toHaveLength(1);
+    assertFields(sink.lastEvent(), { 'request.id': 'req_auto_flush' });
+    expect(sink.lastReceipt()).toBeUndefined();
+    expect(sink.allReceipts()).toEqual([]);
   });
 
   it('preserves order across multiple scopes', async () => {

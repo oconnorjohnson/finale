@@ -1,0 +1,10 @@
+{
+  "title": "Package Guides",
+  "pages": [
+    "schema-zod",
+    "sink-console",
+    "sink-pino",
+    "test-utils",
+    "convex"
+  ]
+}

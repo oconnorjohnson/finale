@@ -16,6 +16,16 @@
         "types": "./dist/index.d.cts",
         "default": "./dist/index.cjs"
       }
+    },
+    "./portable": {
+      "import": {
+        "types": "./dist/portable.d.ts",
+        "default": "./dist/portable.js"
+      },
+      "require": {
+        "types": "./dist/portable.d.cts",
+        "default": "./dist/portable.cjs"
+      }
     }
   },
   "files": [

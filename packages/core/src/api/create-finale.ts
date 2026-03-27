@@ -23,6 +23,7 @@ function buildScopeOptions(config: FinaleConfig, recorder: MetricsRecorder): Sco
     ...(config.defaults ? { defaults: config.defaults } : {}),
     ...(config.limits ? { limits: config.limits } : {}),
     fieldRegistry: config.fields,
+    ...(config.errors ? { errorCapture: config.errors } : {}),
     validationMode: config.validation ?? 'soft',
     onValidationIssue: () => {
       recorder.recordValidationIssue();

@@ -8,13 +8,13 @@
 | 4 | IDLE | IDLE | IDLE | P8.S5 API exports/tests/examples |
 
 ## Status
-Pending
+Completed
 
 ## Goal
 Expose a usable `@finalejs/core` engine surface with creation, metrics, scope access, and framework integration.
 
 ## Current State
-This phase is pending. `FinaleConfig` and `Finale` types already exist in `packages/core/src/types/index.ts`, but there is no `createFinale` implementation, no concrete metrics object, no public API module set, and no Express middleware. The current package root only re-exports low-level modules.
+This phase was completed. `@finalejs/core` now exposes a functioning engine surface with `createFinale()`, live metrics with snapshot support, public scope access helpers, and first-party Express middleware. The root package exports now include `expressMiddleware` plus its public types, and API-level tests cover both engine usage and request-lifecycle middleware usage through the package root.
 
 ## Entry Criteria
 - `P7.S4` completed so the engine can emit events through a real sink path.
@@ -83,6 +83,8 @@ This phase is pending. `FinaleConfig` and `Finale` types already exist in `packa
 - `P8.S5` is the stability gate for Phase 9; adapters should not target internal modules once the public API surface is finalized.
 
 ## Evidence / Validation
-- Current gap is visible in `packages/core/src/index.ts`, which only re-exports modules and does not expose a concrete engine factory.
-- `packages/core/src/types/index.ts` already defines `FinaleConfig`, `Metrics`, and `Finale`, so the missing work is runtime/API implementation.
-- Runtime helpers already exist under `packages/core/src/runtime/`, which should reduce API-layer implementation risk once the engine exists.
+- `packages/core/src/api/create-finale.ts` implements engine creation, queue normalization, sink runtime ownership, and `drain()` wiring.
+- `packages/core/src/api/metrics.ts` provides the concrete metrics store and snapshot-capable read-only view used by `Finale`.
+- `packages/core/src/api/scope-access.ts` exposes `getScope()`, `hasScope()`, and `withScope()` as stable public API helpers.
+- `packages/core/src/api/integrations/express.ts` implements first-party Express request lifecycle management with trace context extraction and single-flush semantics.
+- `packages/core/src/index.ts` exports the supported root V1 API, including `expressMiddleware`, while `packages/core/src/index.test.ts` and `packages/core/src/api/public-api-examples.test.ts` verify documented root-import usage without exposing internal runtime helpers.

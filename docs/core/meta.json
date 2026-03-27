@@ -1,0 +1,15 @@
+{
+  "title": "Core Topics",
+  "pages": [
+    "mental-model",
+    "field-registry",
+    "scopes-events-timers",
+    "validation",
+    "safety-redaction",
+    "sampling",
+    "express",
+    "metrics-and-drain",
+    "error-capture",
+    "portable"
+  ]
+}

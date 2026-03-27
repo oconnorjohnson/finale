@@ -57,6 +57,90 @@ describe('accumulation scope', () => {
     expect(event?.fields.annotations).toEqual(['checkpoint']);
   });
 
+  it('applies engine-level canonical-plus error capture defaults', () => {
+    const scope = new AccumulationScope({
+      errorCapture: {
+        projection: 'canonical-plus',
+      },
+    });
+
+    scope.event.error({
+      type: 'ValidationError',
+      message: 'Invalid input',
+      source: 'form.ts:9:1',
+      timestamp: 42,
+      context: { field: 'email' },
+    });
+    scope.event.flush();
+
+    const event = scope.getLastFinalizedEvent();
+    expect(event?.fields['error.class']).toBe('ValidationError');
+    expect(event?.fields['error.kind']).toBe('try-error');
+    expect(event?.fields['error.context']).toEqual({ field: 'email' });
+  });
+
+  it('allows per-call overrides from canonical to mirror', () => {
+    const scope = new AccumulationScope({
+      errorCapture: {
+        projection: 'canonical',
+      },
+    });
+
+    scope.event.error(
+      {
+        type: 'ValidationError',
+        message: 'Invalid input',
+        source: 'form.ts:9:1',
+        timestamp: 42,
+      },
+      { projection: 'mirror' }
+    );
+    scope.event.flush();
+
+    const event = scope.getLastFinalizedEvent();
+    expect(event?.fields['error.payload']).toEqual({
+      kind: 'try-error',
+      error: {
+        __tryError: true,
+        type: 'ValidationError',
+        message: 'Invalid input',
+        source: 'form.ts:9:1',
+        timestamp: 42,
+      },
+    });
+  });
+
+  it('unwraps convex-like wrappers passed through scope.event.error', () => {
+    const scope = new AccumulationScope({
+      errorCapture: {
+        projection: 'canonical-plus',
+      },
+    });
+
+    const wrapped = new Error('wrapper') as Error & { data: Record<string, unknown> };
+    wrapped.name = 'ConvexError';
+    wrapped.data = {
+      code: 'AUTH_REQUIRED',
+      message: 'Outer message',
+      error: {
+        kind: 'tryError',
+        __tryError: true,
+        type: 'AuthError',
+        message: 'Please sign in',
+        source: 'auth.ts:1:1',
+        timestamp: 1,
+      },
+    };
+
+    scope.event.error(wrapped);
+    scope.event.flush();
+
+    const event = scope.getLastFinalizedEvent();
+    expect(event?.fields['error.class']).toBe('AuthError');
+    expect(event?.fields['error.wrapper.class']).toBe('ConvexError');
+    expect(event?.fields['error.boundary.code']).toBe('AUTH_REQUIRED');
+  });
+
   it('records timers and sub-events', () => {
     vi.useFakeTimers();
     const scope = new AccumulationScope();
@@ -168,6 +252,37 @@ describe('accumulation scope', () => {
     expect(scope.getLastFinalizedEvent()?.fields.keep).toBeDefined();
     expect(scope.getLastFinalizedEvent()?.fields.dropMe).toBeUndefined();
     expect(receipt.fieldsDropped).toContain('dropMe');
+  });
+
+  it('drops oversized mirrored payloads when the event budget is exceeded', () => {
+    const scope = new AccumulationScope({
+      errorCapture: {
+        projection: 'mirror',
+      },
+      limits: {
+        maxTotalSize: 200,
+      },
+      fieldRegistry: {
+        'error.payload': {
+          ...makeField(stringSchema()),
+          priority: 'drop-first',
+        },
+      },
+    });
+
+    scope.event.error({
+      type: 'HugeError',
+      message: 'Very large payload',
+      source: 'huge.ts:1:1',
+      timestamp: 1,
+      context: {
+        blob: 'x'.repeat(2000),
+      },
+    });
+    const receipt = scope.event.flush();
+
+    expect(scope.getLastFinalizedEvent()?.fields['error.payload']).toBeUndefined();
+    expect(receipt.fieldsDropped).toContain('error.payload');
   });
 
   it('applies sampling decision and metadata from custom policy', () => {

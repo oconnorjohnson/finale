@@ -41,6 +41,12 @@ function makeEvent(
 }
 
 describe('pino sink', () => {
+  it('throws when the logger is not an object', () => {
+    expect(() => pinoSink(null as unknown as PinoLoggerLike)).toThrow(
+      'pinoSink expected a Pino-compatible logger object'
+    );
+  });
+
   it('emits the full record at debug for KEEP_DEBUG', () => {
     const logger = createLogger();
     const sink = pinoSink(logger);

@@ -60,7 +60,7 @@ function makeEvent(overrides: Partial<FinalizedEvent> = {}): FinalizedEvent {
     ...base,
     ...overrides,
     fields: { ...base.fields, ...overrides.fields },
-    timings: { ...base.timings, ...overrides.timings },
+    ...(overrides.timings !== undefined ? { timings: overrides.timings } : { timings: base.timings }),
     ...(overrides.subEvents !== undefined ? { subEvents: overrides.subEvents } : { subEvents: base.subEvents }),
     metadata:
       overrides.metadata !== undefined
@@ -72,7 +72,8 @@ function makeEvent(overrides: Partial<FinalizedEvent> = {}): FinalizedEvent {
 }
 
 function stripAnsi(value: string): string {
-  return value.replace(/\u001B\[[0-9;]*m/g, '');
+  const escapeCharacter = String.fromCharCode(27);
+  return value.replace(new RegExp(`${escapeCharacter}\\[[0-9;]*m`, 'g'), '');
 }
 
 describe('console sink', () => {
@@ -160,10 +161,22 @@ describe('console sink', () => {
 
   it('applies metadata inclusion policy in pretty and compact modes', () => {
     const emptyMetadataEvent = makeEvent({ metadata: {} });
+    const undefinedMetadataEvent = makeEvent({
+      metadata: {
+        samplingDecision: undefined,
+        samplingReason: undefined,
+        droppedFields: undefined,
+        redactedFields: undefined,
+      },
+    });
 
     const autoPrettyStream = createMemoryStream({ isTTY: false });
     consoleSink({ stream: autoPrettyStream, includeMetadata: 'auto' }).emit(emptyMetadataEvent);
     expect(autoPrettyStream.chunks[0]).not.toContain('metadata:');
+
+    const autoPrettyUndefinedStream = createMemoryStream({ isTTY: false });
+    consoleSink({ stream: autoPrettyUndefinedStream, includeMetadata: 'auto' }).emit(undefinedMetadataEvent);
+    expect(autoPrettyUndefinedStream.chunks[0]).not.toContain('metadata:');
 
     const alwaysPrettyStream = createMemoryStream({ isTTY: false });
     consoleSink({ stream: alwaysPrettyStream, includeMetadata: 'always' }).emit(emptyMetadataEvent);
@@ -176,6 +189,14 @@ describe('console sink', () => {
     const autoCompactStream = createMemoryStream({ isTTY: false });
     consoleSink({ stream: autoCompactStream, pretty: false, includeMetadata: 'auto' }).emit(emptyMetadataEvent);
     expect(autoCompactStream.chunks[0]).not.toContain('"metadata"');
+
+    const autoCompactUndefinedStream = createMemoryStream({ isTTY: false });
+    consoleSink({
+      stream: autoCompactUndefinedStream,
+      pretty: false,
+      includeMetadata: 'auto',
+    }).emit(undefinedMetadataEvent);
+    expect(autoCompactUndefinedStream.chunks[0]).not.toContain('"metadata"');
 
     const alwaysCompactStream = createMemoryStream({ isTTY: false });
     consoleSink({ stream: alwaysCompactStream, pretty: false, includeMetadata: 'always' }).emit(emptyMetadataEvent);
@@ -200,6 +221,22 @@ describe('console sink', () => {
     const noColorStream = createMemoryStream({ isTTY: true });
     consoleSink({ stream: noColorStream, colors: false }).emit(makeEvent());
     expect(noColorStream.chunks[0]).toBe(stripAnsi(noColorStream.chunks[0] ?? ''));
+  });
+
+  it('omits empty timings and subevents sections in pretty mode', () => {
+    const stream = createMemoryStream({ isTTY: false });
+    const sink = consoleSink({ stream });
+
+    sink.emit(
+      makeEvent({
+        timings: {},
+        subEvents: [],
+      })
+    );
+
+    expect(stream.chunks[0]).not.toContain('timings:');
+    expect(stream.chunks[0]).not.toContain('subevents:');
+    expect(stream.chunks[0]).toContain('fields:');
   });
 
   it('writes only to the provided stream once per event', () => {
